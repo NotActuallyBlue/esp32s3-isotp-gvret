@@ -13,7 +13,9 @@
 // ==========================================
 typedef enum {
     OP_MODE_SIMOS_BLE = 0,
-    OP_MODE_SAVVYCAN_GVRET
+    OP_MODE_SAVVYCAN_GVRET,
+    OP_MODE_ELM327,
+    OP_MODE_COUNT,
 } dongle_mode_t;
 
 // Global synchronization primitives
