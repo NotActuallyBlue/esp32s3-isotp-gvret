@@ -9,11 +9,9 @@
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_log.h"
-#include "esp_mac.h"
 #include "display.h"
 
 #define TAG "DISPLAY"
-
 #define LCD_HOST               SPI2_HOST
 
 // Verified Adafruit ESP32-S3 TFT Feather Pinout
@@ -25,15 +23,19 @@
 #define PIN_NUM_LCD_CS         GPIO_NUM_7
 #define PIN_NUM_LCD_RST        GPIO_NUM_40
 
-// Landscape Dimensions
-#define LCD_H_RES              240
-#define LCD_V_RES              135
+// Portrait Dimensions
+#define LCD_H_RES              135
+#define LCD_V_RES              240
+
+// Global Traffic Counters Definitions
+volatile uint32_t g_rx_count = 0;
+volatile uint32_t g_tx_count = 0;
 
 static esp_lcd_panel_handle_t panel_handle = NULL;
 static TimerHandle_t display_timer = NULL;
 static bool display_is_on = true;
 
-// Basic 8x8 ASCII Font (Characters 32-126)
+// Basic 8x8 ASCII Font
 static const uint8_t font8x8_basic[95][8] = {
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00}, // Space
     {0x18,0x3C,0x3C,0x18,0x18,0x00,0x18,0x00}, // !
@@ -132,71 +134,141 @@ static const uint8_t font8x8_basic[95][8] = {
     {0x76,0xDC,0x00,0x00,0x00,0x00,0x00,0x00}  // ~
 };
 
-void display_clear(uint16_t color)
+// 1. Bluetooth Icon
+static const uint8_t icon_bluetooth_32x32[] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+    0x00, 0x03, 0x80, 0x00, 0x00, 0x03, 0xc0, 0x00, 0x00, 0x03, 0xe0, 0x00, 0x00, 0x03, 0xf0, 0x00, 
+    0x00, 0x03, 0xb8, 0x00, 0x00, 0x43, 0x9c, 0x00, 0x00, 0x73, 0x9c, 0x00, 0x00, 0x7b, 0xb8, 0x00, 
+    0x00, 0x3f, 0xf0, 0x00, 0x00, 0x1f, 0xe0, 0x00, 0x00, 0x0f, 0xc0, 0x00, 0x00, 0x07, 0x80, 0x00, 
+    0x00, 0x07, 0xc0, 0x00, 0x00, 0x0f, 0xe0, 0x00, 0x00, 0x1f, 0xf0, 0x00, 0x00, 0x3b, 0xf8, 0x00, 
+    0x00, 0x73, 0xbc, 0x00, 0x00, 0x63, 0x9c, 0x00, 0x00, 0x43, 0x9c, 0x00, 0x00, 0x03, 0xb8, 0x00, 
+    0x00, 0x03, 0xf0, 0x00, 0x00, 0x03, 0xe0, 0x00, 0x00, 0x03, 0xc0, 0x00, 0x00, 0x03, 0x80, 0x00, 
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+// 2. USB-C / Pill Icon
+static const uint8_t icon_usb_32x32[] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7f, 0xfe, 0x00, 
+    0x00, 0x40, 0x02, 0x00, 0x00, 0x40, 0x02, 0x00, 0x00, 0x4e, 0x72, 0x00, 0x00, 0x4e, 0x72, 0x00, 
+    0x00, 0x4e, 0x72, 0x00, 0x00, 0x4e, 0x72, 0x00, 0x00, 0x40, 0x02, 0x00, 0x00, 0x40, 0x02, 0x00, 
+    0x00, 0xff, 0xff, 0x00, 0x01, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80, 
+    0x01, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80, 
+    0x01, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80, 
+    0x01, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80, 0x01, 0x80, 0x01, 0x80, 
+    0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+// Fill a flat rectangle
+static void display_fill_rect(int x, int y, int w, int h, uint16_t color)
 {
-    uint16_t *buf = malloc(LCD_H_RES * 15 * sizeof(uint16_t));
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > LCD_H_RES) w = LCD_H_RES - x;
+    if (y + h > LCD_V_RES) h = LCD_V_RES - y;
+    if (w <= 0 || h <= 0) return;
+
+    uint16_t *buf = malloc(w * sizeof(uint16_t));
     if (!buf) return;
-    for (int i = 0; i < LCD_H_RES * 15; i++) buf[i] = color;
-    for (int y = 0; y < LCD_V_RES; y += 15) {
-        int y_end = (y + 15 <= LCD_V_RES) ? (y + 15) : LCD_V_RES;
-        esp_lcd_panel_draw_bitmap(panel_handle, 0, y, LCD_H_RES, y_end, buf);
+    for (int i = 0; i < w; i++) buf[i] = color;
+
+    for (int cur_y = y; cur_y < y + h; cur_y++) {
+        esp_lcd_panel_draw_bitmap(panel_handle, x, cur_y, x + w, cur_y + 1, buf);
     }
     free(buf);
 }
 
-// Draw a single character using the 8x8 font
-void display_draw_char(int x, int y, char c, uint16_t color, uint16_t bg)
+void display_clear(uint16_t color)
+{
+    display_fill_rect(0, 0, LCD_H_RES, LCD_V_RES, color);
+}
+
+// Draw a single character scaled by integer multiplier
+static void display_draw_char_scaled(int x, int y, char c, uint16_t color, uint16_t bg, int scale)
 {
     if (c < 32 || c > 126) c = ' ';
     const uint8_t *glyph = font8x8_basic[c - 32];
-    uint16_t char_buf[64];
+    int char_w = 8 * scale;
+    uint16_t *line_buf = malloc(char_w * sizeof(uint16_t));
+    if (!line_buf) return;
 
-    for (int row = 0; row < 8; row++) {
-        uint8_t bits = glyph[row];
-        for (int col = 0; col < 8; col++) {
-            char_buf[row * 8 + col] = (bits & (0x80 >> col)) ? color : bg;
+    for (int r = 0; r < 8; r++) {
+        uint8_t bits = glyph[r];
+        for (int c_idx = 0; c_idx < 8; c_idx++) {
+            uint16_t px = (bits & (0x80 >> c_idx)) ? color : bg;
+            for (int s = 0; s < scale; s++) {
+                line_buf[c_idx * scale + s] = px;
+            }
+        }
+        for (int s = 0; s < scale; s++) {
+            int draw_y = y + (r * scale) + s;
+            if (draw_y < LCD_V_RES && (x + char_w) <= LCD_H_RES && x >= 0) {
+                esp_lcd_panel_draw_bitmap(panel_handle, x, draw_y, x + char_w, draw_y + 1, line_buf);
+            }
         }
     }
-    if (x + 8 <= LCD_H_RES && y + 8 <= LCD_V_RES) {
-        esp_lcd_panel_draw_bitmap(panel_handle, x, y, x + 8, y + 8, char_buf);
-    }
+    free(line_buf);
 }
 
-// Draw a string of text
-void display_draw_string(int x, int y, const char *str, uint16_t color, uint16_t bg)
+// Draw string with integer scale
+static void display_draw_string_scaled(int x, int y, const char *str, uint16_t color, uint16_t bg, int scale)
 {
     int cur_x = x;
-    int cur_y = y;
     while (*str) {
-        if (*str == '\n') {
-            cur_x = x;
-            cur_y += 10;
-        } else {
-            display_draw_char(cur_x, cur_y, *str, color, bg);
-            cur_x += 8;
-        }
+        display_draw_char_scaled(cur_x, y, *str, color, bg, scale);
+        cur_x += (8 * scale);
         str++;
     }
 }
 
-// Power control: turn off the backlight (instant sleep) or restore it
+// Center-aligned text string
+static void display_draw_string_centered(int y, const char *str, uint16_t color, uint16_t bg, int scale)
+{
+    int text_len = strlen(str);
+    int total_px = text_len * 8 * scale;
+    int start_x = (LCD_H_RES - total_px) / 2;
+    if (start_x < 0) start_x = 0;
+    display_draw_string_scaled(start_x, y, str, color, bg, scale);
+}
+
+// Draw 32x32 horizontal byte stream bitmap scaled
+static void display_draw_icon(int x, int y, const uint8_t *bitmap, uint16_t color, uint16_t bg, int scale)
+{
+    int icon_dim = 32 * scale;
+    uint16_t *line_buf = malloc(icon_dim * sizeof(uint16_t));
+    if (!line_buf) return;
+
+    for (int r = 0; r < 32; r++) {
+        for (int b = 0; b < 4; b++) {
+            uint8_t byte_val = bitmap[(r * 4) + b];
+            for (int bit = 0; bit < 8; bit++) {
+                uint16_t px = (byte_val & (0x80 >> bit)) ? color : bg;
+                int c_idx = (b * 8) + bit;
+                for (int s = 0; s < scale; s++) {
+                    line_buf[c_idx * scale + s] = px;
+                }
+            }
+        }
+        for (int s = 0; s < scale; s++) {
+            int draw_y = y + (r * scale) + s;
+            if (draw_y < LCD_V_RES && (x + icon_dim) <= LCD_H_RES && x >= 0) {
+                esp_lcd_panel_draw_bitmap(panel_handle, x, draw_y, x + icon_dim, draw_y + 1, line_buf);
+            }
+        }
+    }
+    free(line_buf);
+}
+
 void display_power(bool enable)
 {
     display_is_on = enable;
-    if (enable) {
-        gpio_set_level(PIN_NUM_BK_LIGHT, 1);
-    } else {
-        gpio_set_level(PIN_NUM_BK_LIGHT, 0);
-    }
+    gpio_set_level(PIN_NUM_BK_LIGHT, enable ? 1 : 0);
 }
 
-// Idle callback
 static void display_timer_callback(TimerHandle_t xTimer)
 {
     display_power(false);
 }
 
-// Bump/restart the timer and turn backlight back on if sleeping
 static void display_bump_timer(void)
 {
     if (!display_is_on) {
@@ -207,19 +279,111 @@ static void display_bump_timer(void)
     }
 }
 
-void display_set_status(const char *transport, const char *status_msg, uint16_t color)
+// Live Traffic Counters Display
+void display_update_traffic(uint32_t rx_count, uint32_t tx_count)
 {
     display_bump_timer();
 
-    if (transport != NULL) {
-        display_draw_string(74, 42, "                    ", COLOR_BLACK, COLOR_BLACK);
-        display_draw_string(74, 42, transport, COLOR_WHITE, COLOR_BLACK);
+    int start_y = 175;
+    char rx_str[32];
+    char tx_str[32];
+
+    snprintf(rx_str, sizeof(rx_str), "RX: %lu", rx_count);
+    snprintf(tx_str, sizeof(tx_str), "TX: %lu", tx_count);
+
+    // Clear the lower section area cleanly before drawing new numbers
+    display_fill_rect(10, start_y, LCD_H_RES - 20, 55, COLOR_BLACK);
+
+    // Draw the metrics stacked cleanly at the bottom
+    display_draw_string_centered(start_y, rx_str, COLOR_GREEN, COLOR_BLACK, 1);
+    display_draw_string_centered(start_y + 18, tx_str, COLOR_CYAN, COLOR_BLACK, 1);
+}
+
+// Background task to handle throttled UI refreshing (runs every 300ms)
+static void display_traffic_task(void *pvParameters)
+{
+    uint32_t last_rx = 0;
+    uint32_t last_tx = 0;
+
+    while (1) {
+        uint32_t cur_rx = g_rx_count;
+        uint32_t cur_tx = g_tx_count;
+
+        if (cur_rx != last_rx || cur_tx != last_tx) {
+            display_update_traffic(cur_rx, cur_tx);
+            last_rx = cur_rx;
+            last_tx = cur_tx;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(300));
+    }
+}
+
+// Full portrait card UI
+void display_set_mode_view(const char *mode_title, display_icon_t icon, const char *status_str, uint16_t state_color)
+{
+    display_bump_timer();
+
+    display_clear(COLOR_BLACK);
+
+    // 1. Center header with auto-scale
+    int scale = (strlen(mode_title) <= 8) ? 2 : 1;
+    int header_y = (scale == 2) ? 14 : 18;
+    display_draw_string_centered(header_y, mode_title, COLOR_WHITE, COLOR_BLACK, scale);
+
+    // 2. Centered Hero Icon (64x64 at scale 2)
+    int icon_x = 35;
+    int icon_y = 48;
+
+    if (icon == ICON_BLUETOOTH || icon == ICON_OBD) {
+        display_draw_icon(icon_x, icon_y, icon_bluetooth_32x32, state_color, COLOR_BLACK, 2);
+    } else if (icon == ICON_USB) {
+        display_draw_icon(icon_x, icon_y, icon_usb_32x32, state_color, COLOR_BLACK, 2);
     }
 
-    if (status_msg != NULL) {
-        display_draw_string(74, 74, "                    ", COLOR_BLACK, COLOR_BLACK);
-        display_draw_string(74, 74, status_msg, color, COLOR_BLACK);
+    // 3. Status Pill Banner
+    int pill_x = 10;
+    int pill_y = 130;
+    int pill_w = 115;
+    int pill_h = 32;
+
+    display_fill_rect(pill_x, pill_y, pill_w, pill_h, state_color);
+
+    // Auto-scale status text based on length to fit inside the 115px pill width
+    int status_scale = (strlen(status_str) <= 7) ? 2 : 1;
+    int text_h = 8 * status_scale;
+    int text_y = pill_y + (pill_h - text_h) / 2;
+
+    display_draw_string_centered(text_y, status_str, COLOR_BLACK, state_color, status_scale);
+
+    // 4. Initialize traffic counters display on view reset
+    display_update_traffic(g_rx_count, g_tx_count);
+}
+
+// Backward-compatible router for existing calls
+void display_set_status(const char *transport, const char *status_msg, uint16_t color)
+{
+    display_icon_t icon = ICON_BLUETOOTH;
+
+    const char *header_label = transport;
+    if (strstr(transport, "SAVVY") != NULL || strstr(transport, "USB") != NULL) {
+        icon = ICON_USB;
+        header_label = "SAVVYCAN";
+    } else if (strstr(transport, "ELM") != NULL) {
+        header_label = "ELM327";
+    } else if (strstr(transport, "SIMOS") != NULL || strstr(transport, "ISO-TP") != NULL || strstr(transport, "BLE") != NULL) {
+        icon = ICON_BLUETOOTH;
+        header_label = "SIMOS";
     }
+
+    const char *short_status = status_msg;
+    if (strstr(status_msg, "CONNECTED") != NULL)        short_status = "CONNECTED";
+    else if (strstr(status_msg, "WAITING") != NULL)     short_status = "READY";
+    else if (strstr(status_msg, "ERROR") != NULL)       short_status = "ERROR";
+    else if (strstr(status_msg, "DISCONNECTED") != NULL) short_status = "OFFLINE";
+    else if (strstr(status_msg, "REBOOTING") != NULL)   short_status = "REBOOT";
+
+    display_set_mode_view(header_label, icon, short_status, color);
 }
 
 void display_init(void)
@@ -250,7 +414,7 @@ void display_init(void)
         .miso_io_num = -1,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = LCD_H_RES * 20 * sizeof(uint16_t),
+        .max_transfer_sz = LCD_V_RES * 20 * sizeof(uint16_t),
     };
     ESP_ERROR_CHECK(spi_bus_initialize(LCD_HOST, &buscfg, SPI_DMA_CH_AUTO));
 
@@ -277,37 +441,26 @@ void display_init(void)
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel_handle, true));
 
-    // Adafruit Feather Landscape: Swap X/Y, mirror X=true, mirror Y=false
-    ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(panel_handle, true));
-    ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle, true, false));
+    // Portrait Mode: mirror both X and Y for correct orientation
+    ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(panel_handle, false));
+    ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle, true, true));
 
-    // Landscape window gap offsets (40, 53)
-    ESP_ERROR_CHECK(esp_lcd_panel_set_gap(panel_handle, 40, 53));
+    // Adafruit 135x240 portrait window offsets
+    ESP_ERROR_CHECK(esp_lcd_panel_set_gap(panel_handle, 52, 40));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
 
-    // Clear to clean background
+    // Clear display
     display_clear(COLOR_BLACK);
 
-    // Fetch chip MAC address
-    uint8_t mac[6];
-    esp_read_mac(mac, ESP_MAC_BT);
-    char mac_str[32];
-    snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
-             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    // Initial Splash Screen
+    display_set_mode_view("STANDBY", ICON_BLUETOOTH, "READY", COLOR_CYAN);
 
-    // Render Clean Landscape UI
-    display_draw_string(10, 10,  "=== ESP32-S3 ISO-TP BRIDGE ===", COLOR_CYAN,     COLOR_BLACK);
-    display_draw_string(10, 24,  "--------------------------------", COLOR_DARKGREY, COLOR_BLACK);
-    display_draw_string(10, 42,  "MODE:    BLE ISO-TP BRIDGE",     COLOR_WHITE,    COLOR_BLACK);
-    display_draw_string(10, 58,  "BUS:     CAN @ 500 KBPS",        COLOR_WHITE,    COLOR_BLACK);
-    display_draw_string(10, 74,  "STATUS:  ADVERTISING (READY)",   COLOR_GREEN,    COLOR_BLACK);
-    display_draw_string(10, 92,  "--------------------------------", COLOR_DARKGREY, COLOR_BLACK);
-    display_draw_string(10, 110, "MAC: ",                           COLOR_YELLOW,   COLOR_BLACK);
-    display_draw_string(50, 110, mac_str,                          COLOR_CYAN,     COLOR_BLACK);
-
-    // Start 5-second idle countdown timer
+    // 5-second idle timer
     display_timer = xTimerCreate("DispTimer", pdMS_TO_TICKS(5000), pdFALSE, NULL, display_timer_callback);
     if (display_timer) {
         xTimerStart(display_timer, 0);
     }
+
+    // Create background traffic refresh task (updates every 300ms if changed)
+    xTaskCreate(display_traffic_task, "DispTraffic", 2048, NULL, tskIDLE_PRIORITY + 1, NULL);
 }

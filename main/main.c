@@ -4,17 +4,10 @@
 #include <errno.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/queue.h"
 #include "freertos/semphr.h"
-#include "driver/twai.h"
-#include "esp_pm.h"
-#include "esp_sleep.h"
 #include "esp_err.h"
 #include "esp_log.h"
-#include "esp_timer.h"
-#include "esp_task_wdt.h"
 #include "esp_random.h"
-#include "soc/dport_reg.h"
 #include "isotp.h"
 #include "ble_server.h"
 #include "isotp_link_containers.h"
@@ -79,7 +72,7 @@ void app_main(void)
 
     if (current_mode == OP_MODE_SIMOS_BLE) {
         ESP_LOGI(MAIN_TAG, "Booting in SIMOS BLE ISO-TP Mode");
-        display_set_status("BLE ISO-TP", "ADVERTISING", COLOR_CYAN);
+        display_set_status("BLE ISO-TP", "READY", COLOR_CYAN);
 
         // Core hardware & protocol stacks for Simos BLE
         ble_server_init();

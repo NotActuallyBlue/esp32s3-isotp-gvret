@@ -11,19 +11,19 @@
 #define TAG "GVRET"
 
 // Protocol command bytes
-#define PROTO_BUILD_CAN_FRAME   0   // 0x00
-#define PROTO_TIME_SYNC         1   // 0x01
-#define PROTO_DIG_INPUTS        2   // 0x02
-#define PROTO_ANA_INPUTS        3   // 0x03
-#define PROTO_SET_DIG_OUT       4   // 0x04
-#define PROTO_SET_CONFIG        5   // 0x05
-#define PROTO_GET_CANBUS_PARAMS 6   // 0x06
-#define PROTO_GET_DEV_INFO      7   // 0x07
-#define PROTO_SET_BAUD_0        8   // 0x08
-#define PROTO_GET_EXT_BUSES     9   // 0x09
-#define PROTO_SET_EXT_BUSES     10  // 0x0A
-#define PROTO_GET_NUM_BUSES     12  // 0x0C
-#define PROTO_GET_NUM_BUSES_EXT 13  // 0x0D
+#define PROTO_BUILD_CAN_FRAME    0   // 0x00
+#define PROTO_TIME_SYNC          1   // 0x01
+#define PROTO_DIG_INPUTS         2   // 0x02
+#define PROTO_ANA_INPUTS         3   // 0x03
+#define PROTO_SET_DIG_OUT        4   // 0x04
+#define PROTO_SET_CONFIG         5   // 0x05
+#define PROTO_GET_CANBUS_PARAMS  6   // 0x06
+#define PROTO_GET_DEV_INFO       7   // 0x07
+#define PROTO_SET_BAUD_0         8   // 0x08
+#define PROTO_GET_EXT_BUSES      9   // 0x09
+#define PROTO_SET_EXT_BUSES      10  // 0x0A
+#define PROTO_GET_NUM_BUSES      12  // 0x0C
+#define PROTO_GET_NUM_BUSES_EXT  13  // 0x0D
 
 // Forward frames from vehicle/CAN bus to USB (SavvyCAN)
 static void gvret_send_frame(const twai_message_t *frame)
@@ -59,6 +59,8 @@ static void gvret_rx_can_task(void *pvParameters)
     twai_message_t rx_frame;
     while (1) {
         if (twai_receive(&rx_frame, pdMS_TO_TICKS(50)) == ESP_OK) {
+            // Track incoming traffic from vehicle CAN bus
+            g_rx_count++;
             gvret_send_frame(&rx_frame);
         }
     }
@@ -84,11 +86,6 @@ static void gvret_comm_task(void *pvParameters)
 
                     switch (cmd) {
                         case PROTO_BUILD_CAN_FRAME: { // 0x00: Transmit frame from SavvyCAN to vehicle
-                            // Payload structure from SavvyCAN:
-                            // [i+1..i+4] ID (uint32_t, little-endian, MSB bit 31 set if extended)
-                            // [i+5] Bus number + flags
-                            // [i+6] DLC (length)
-                            // [i+7..] Data payload
                             if (i + 6 < len) {
                                 twai_message_t tx_frame = {0};
                                 uint32_t id = (uint32_t)rx_buf[i + 1] |
@@ -111,6 +108,10 @@ static void gvret_comm_task(void *pvParameters)
                                 if (i + 6 + dlc < len) {
                                     memcpy(tx_frame.data, &rx_buf[i + 7], dlc);
                                     twai_transmit(&tx_frame, pdMS_TO_TICKS(10));
+                                    
+                                    // Track outgoing traffic sent to vehicle CAN bus
+                                    g_tx_count++;
+
                                     i += (6 + dlc); // Advance pointer past payload
                                 }
                             }
@@ -138,7 +139,7 @@ static void gvret_comm_task(void *pvParameters)
                         case PROTO_GET_CANBUS_PARAMS: { // 0x06: Standard bus params
                             const uint8_t resp[] = {
                                 0xF1, PROTO_GET_CANBUS_PARAMS,
-                                0x01,                   // Bus 0 active, listen-only off
+                                0x01,                // Bus 0 active, listen-only off
                                 0x20, 0xA1, 0x07, 0x00  // 500,000 baud (little-endian uint32)
                             };
                             usb_serial_jtag_write_bytes(resp, sizeof(resp), pdMS_TO_TICKS(20));
@@ -181,7 +182,7 @@ static void gvret_comm_task(void *pvParameters)
 
 void gvret_start(void)
 {
-    display_set_status("SAVVYCAN", "USB READY", COLOR_GREEN);
+    display_set_status("SAVVYCAN", "READY", COLOR_GREEN);
 
     usb_serial_jtag_driver_config_t usb_cfg = {
         .tx_buffer_size = 2048,
@@ -190,5 +191,5 @@ void gvret_start(void)
     usb_serial_jtag_driver_install(&usb_cfg);
 
     xTaskCreate(gvret_rx_can_task, "gvret_can_rx", 4096, NULL, 5, NULL);
-    xTaskCreate(gvret_comm_task,   "gvret_comm",   4096, NULL, 5, NULL);
+    xTaskCreate(gvret_comm_task,    "gvret_comm",    4096, NULL, 5, NULL);
 }

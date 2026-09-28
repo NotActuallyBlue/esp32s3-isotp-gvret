@@ -53,6 +53,9 @@ int isotp_user_send_can(const uint32_t arbitration_id, const uint8_t* data, cons
     memcpy(frame.data, data, sizeof(frame.data));
     twai_send(&frame);
 
+    // Track outgoing CAN traffic
+    g_tx_count++;
+
     return ISOTP_RET_OK;                           
 }
 
@@ -781,6 +784,8 @@ void ch_on_uart_disconnect()
 
 void bridge_received_ble(const void* src, size_t size)
 {
+    // Track incoming BLE data packets
+    g_rx_count++;
     packet_received(src, size);
 }
 
