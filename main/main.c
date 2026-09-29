@@ -21,7 +21,6 @@
 #include "display.h"
 #include "mode_mgr.h"
 #include "gvret.h"
-#include "elm327.h"
 
 SemaphoreHandle_t sync_task_sem = NULL;
 
@@ -44,14 +43,6 @@ static void app_ble_connected(void) {
 static void app_ble_disconnected(void) {
     display_set_status("BLE ISO-TP", "DISCONNECTED", COLOR_RED);
     bridge_disconnect();
-}
-
-static void app_elm_ble_connected(void) {
-    display_set_status("ELM327 OBD2", "CONNECTED", COLOR_GREEN);
-}
-
-static void app_elm_ble_disconnected(void) {
-    display_set_status("ELM327 OBD2", "WAITING BLE", COLOR_CYAN);
 }
 
 void app_main(void)
@@ -118,31 +109,6 @@ void app_main(void)
         gvret_start();
 
         ESP_LOGI(MAIN_TAG, "SavvyCAN GVRET services running.");
-    }
-    else if (current_mode == OP_MODE_ELM327) {
-        ESP_LOGI(MAIN_TAG, "Booting in ELM327 OBD2 Mode");
-        display_set_status("ELM327 OBD2", "WAITING BLE", COLOR_CYAN);
-
-        // Hardware initialization
-        twai_init();
-        twai_start_task();
-        ble_server_init();
-
-        // Optional custom advertised BLE name for standard OBD apps
-        ble_set_gap_name("OBDII-BLE", false);
-
-        // Wire BLE rx directly to the ELM ASCII engine
-        ble_server_callbacks callbacks = {
-            .data_received = elm327_rx_data,
-            .notifications_subscribed = app_elm_ble_connected,
-            .notifications_unsubscribed = app_elm_ble_disconnected
-        };
-
-        ble_server_start(callbacks);
-        elm327_init();
-        elm327_start();
-
-        ESP_LOGI(MAIN_TAG, "ELM327 OBD2 services running.");
     }
 
     // Main system heartbeat loop

@@ -19,7 +19,6 @@ static const char* get_mode_name(dongle_mode_t mode)
     switch (mode) {
         case OP_MODE_SIMOS_BLE:      return "SIMOS BLE";
         case OP_MODE_SAVVYCAN_GVRET: return "SAVVYCAN USB";
-        case OP_MODE_ELM327:         return "ELM327 OBD2";
         default:                     return "UNKNOWN";
     }
 }

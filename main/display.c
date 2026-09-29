@@ -289,8 +289,6 @@ void display_set_status(const char *transport, const char *status_msg, uint16_t 
     if (strstr(transport, "SAVVY") != NULL || strstr(transport, "USB") != NULL) {
         icon = ICON_USB;
         header_label = "SAVVYCAN";
-    } else if (strstr(transport, "ELM") != NULL) {
-        header_label = "ELM327";
     } else if (strstr(transport, "SIMOS") != NULL || strstr(transport, "ISO-TP") != NULL || strstr(transport, "BLE") != NULL) {
         header_label = "SIMOS";
     }
