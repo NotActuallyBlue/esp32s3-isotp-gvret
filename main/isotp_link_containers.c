@@ -10,6 +10,10 @@
 
 #define LINKS_TAG 		"ISOTP_LINKS"
 
+// Define the actual memory for the global variables here
+IsoTpLinkContainer isotp_link_containers[NUM_ISOTP_LINK_CONTAINERS];
+uint16_t isotp_link_container_id = 0;
+
 void configure_isotp_links()
 {
 	disable_isotp_links();

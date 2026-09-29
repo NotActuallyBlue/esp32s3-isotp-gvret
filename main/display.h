@@ -31,7 +31,6 @@ typedef enum {
 } display_icon_t;
 
 void display_init(void);
-void display_clear(uint16_t color);
 void display_power(bool power_on);
 
 // Portrait UI API

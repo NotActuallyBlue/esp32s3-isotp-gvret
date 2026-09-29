@@ -1,6 +1,11 @@
 #ifndef __ISOTP_LINK_CONTAINERS_H__
 #define __ISOTP_LINK_CONTAINERS_H__
 
+#include <stdint.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "isotp.h"
+
 #define NUM_ISOTP_LINK_CONTAINERS 4
 
 typedef struct IsoTpLinkContainer {
@@ -16,11 +21,11 @@ typedef struct IsoTpLinkContainer {
     uint16_t number;
 } IsoTpLinkContainer;
 
-IsoTpLinkContainer isotp_link_containers[NUM_ISOTP_LINK_CONTAINERS];
-uint16_t isotp_link_container_id;
+// Mark as extern so they are only declared here, not defined
+extern IsoTpLinkContainer isotp_link_containers[NUM_ISOTP_LINK_CONTAINERS];
+extern uint16_t isotp_link_container_id;
 
 void configure_isotp_links();
 void disable_isotp_links();
-
 
 #endif
