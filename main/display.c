@@ -158,13 +158,14 @@ static const uint8_t icon_usb_32x32[] = {
     0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
 
-// Fill a flat rectangle
+// Fill a flat rectangle with a 1-pixel safety margin to prevent edge bleeding
 static void display_fill_rect(int x, int y, int w, int h, uint16_t color)
 {
     if (x < 0) { w += x; x = 0; }
     if (y < 0) { h += y; y = 0; }
-    if (x + w > LCD_H_RES) w = LCD_H_RES - x;
-    if (y + h > LCD_V_RES) h = LCD_V_RES - y;
+    // Strict boundary clipping to prevent ST7789 address pointer wrap-around
+    if (x + w > LCD_H_RES - 1) w = (LCD_H_RES - 1) - x;
+    if (y + h > LCD_V_RES - 1) h = (LCD_V_RES - 1) - y;
     if (w <= 0 || h <= 0) return;
 
     uint16_t *buf = malloc(w * sizeof(uint16_t));
@@ -175,11 +176,6 @@ static void display_fill_rect(int x, int y, int w, int h, uint16_t color)
         esp_lcd_panel_draw_bitmap(panel_handle, x, cur_y, x + w, cur_y + 1, buf);
     }
     free(buf);
-}
-
-void display_clear(uint16_t color)
-{
-    display_fill_rect(0, 0, LCD_H_RES, LCD_V_RES, color);
 }
 
 // Draw a single character scaled by integer multiplier
@@ -284,7 +280,7 @@ void display_update_traffic(uint32_t rx_count, uint32_t tx_count)
 {
     display_bump_timer();
 
-    int start_y = 175;
+    int start_y = 172;
     char rx_str[32];
     char tx_str[32];
 
@@ -292,11 +288,11 @@ void display_update_traffic(uint32_t rx_count, uint32_t tx_count)
     snprintf(tx_str, sizeof(tx_str), "TX: %lu", tx_count);
 
     // Clear the lower section area cleanly before drawing new numbers
-    display_fill_rect(10, start_y, LCD_H_RES - 20, 55, COLOR_BLACK);
+    display_fill_rect(15, start_y, LCD_H_RES - 30, 50, COLOR_BLACK);
 
     // Draw the metrics stacked cleanly at the bottom
-    display_draw_string_centered(start_y, rx_str, COLOR_GREEN, COLOR_BLACK, 1);
-    display_draw_string_centered(start_y + 18, tx_str, COLOR_CYAN, COLOR_BLACK, 1);
+    display_draw_string_centered(start_y + 6, rx_str, COLOR_GREEN, COLOR_BLACK, 1);
+    display_draw_string_centered(start_y + 26, tx_str, COLOR_CYAN, COLOR_BLACK, 1);
 }
 
 // Background task to handle throttled UI refreshing (runs every 300ms)
