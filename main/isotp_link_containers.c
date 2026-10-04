@@ -36,28 +36,36 @@ void configure_isotp_links()
 	assert(ecu_isotp_link_container->send_buf != NULL);
 	assert(ecu_isotp_link_container->payload_buf != NULL);
 	isotp_init_link(
-		&ecu_isotp_link_container->link,
-		0x7E0, 0x7E8,
-		ecu_isotp_link_container->send_buf, ecu_isotp_link_container->buffer_size,
-		ecu_isotp_link_container->recv_buf, ecu_isotp_link_container->buffer_size
-	);
+        &ecu_isotp_link_container->link,
+        0x7E0, 0x7E8,
+        ecu_isotp_link_container->send_buf, ecu_isotp_link_container->buffer_size,
+        ecu_isotp_link_container->recv_buf, ecu_isotp_link_container->buffer_size
+    );
+    
+    // Tune ISO-TP flow control parameters for Simos 18 stability
+    ecu_isotp_link_container->link.default_block_size = 8;  // Limit block size to 8 frames
+    ecu_isotp_link_container->link.st_min = 5000;           // 5ms separation time (in microseconds)
 
 	// TCU
-	tcu_isotp_link_container->number = 1;
-	strcpy(tcu_isotp_link_container->name, "isotp_container_tcu");
-	tcu_isotp_link_container->buffer_size = ISOTP_BUFFER_SIZE;
-	tcu_isotp_link_container->recv_buf = calloc(1, tcu_isotp_link_container->buffer_size);
-	tcu_isotp_link_container->send_buf = calloc(1, tcu_isotp_link_container->buffer_size);
-	tcu_isotp_link_container->payload_buf = calloc(1, tcu_isotp_link_container->buffer_size);
-	assert(tcu_isotp_link_container->recv_buf != NULL);
-	assert(tcu_isotp_link_container->send_buf != NULL);
-	assert(tcu_isotp_link_container->payload_buf != NULL);
-	isotp_init_link(
-		&tcu_isotp_link_container->link,
-		0x7E1, 0x7E9,
-		tcu_isotp_link_container->send_buf, tcu_isotp_link_container->buffer_size,
-		tcu_isotp_link_container->recv_buf, tcu_isotp_link_container->buffer_size
-	);
+    tcu_isotp_link_container->number = 1;
+    strcpy(tcu_isotp_link_container->name, "isotp_container_tcu");
+    tcu_isotp_link_container->buffer_size = ISOTP_BUFFER_SIZE;
+    tcu_isotp_link_container->recv_buf = calloc(1, tcu_isotp_link_container->buffer_size);
+    tcu_isotp_link_container->send_buf = calloc(1, tcu_isotp_link_container->buffer_size);
+    tcu_isotp_link_container->payload_buf = calloc(1, tcu_isotp_link_container->buffer_size);
+    assert(tcu_isotp_link_container->recv_buf != NULL);
+    assert(tcu_isotp_link_container->send_buf != NULL);
+    assert(tcu_isotp_link_container->payload_buf != NULL);
+    isotp_init_link(
+        &tcu_isotp_link_container->link,
+        0x7E1, 0x7E9,
+        tcu_isotp_link_container->send_buf, tcu_isotp_link_container->buffer_size,
+        tcu_isotp_link_container->recv_buf, tcu_isotp_link_container->buffer_size
+    );
+
+    // Tune TCU flow control parameters to prevent DSG timeouts
+    tcu_isotp_link_container->link.default_block_size = 8;
+    tcu_isotp_link_container->link.st_min = 5000;
 
 	// HALDEX
 	haldex_isotp_link_container->number = 2;

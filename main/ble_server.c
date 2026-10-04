@@ -26,7 +26,7 @@
 #define SPP_SVC_INST_ID                      0
 #define DEFAULT_MTU_SIZE                     23
 #define DEFAULT_DELAY_SEND                   0
-#define DEFAULT_DELAY_MULTI                  0
+#define DEFAULT_DELAY_MULTI                  2
 
 static const uint16_t spp_service_uuid = 0xABF0;
 #define ESP_GATT_UUID_SPP_DATA_RECEIVE       0xABF1
@@ -205,7 +205,6 @@ void send_task(void *pvParameters)
                 if (ble_allow_run_tasks()) {
                     if (event.msg_length) {
                         if (!enable_data_ntf) {
-                            ESP_LOGW(BLE_TAG, "Notifications not enabled, discarding message");
                             free(event.buffer);
                         }
                         else
@@ -214,12 +213,12 @@ void send_task(void *pvParameters)
                             xSemaphoreGive(ble_congested);
 
                             uint32_t dataLength = event.msg_length + sizeof(ble_header_t);
-                            uint8_t* data = (uint8_t*)malloc(dataLength);
+                            uint8_t* data = (uint8_t*)malloc(sizeof(uint8_t) * dataLength);
                             if (data == NULL) {
                                 free(event.buffer);
                                 break;
                             }
-                            memset(data, 0, dataLength);
+                            memset(data, 0x0, dataLength);
                             memcpy(data + sizeof(ble_header_t), event.buffer, event.msg_length);
                             free(event.buffer);
 
@@ -230,19 +229,82 @@ void send_task(void *pvParameters)
                             header->rxID = event.rxID;
                             header->txID = event.txID;
 
+                            // Multisend packing logic
+                            while (dataLength < (spp_mtu_size - 3 - sizeof(ble_header_t)))
+                            {
+                                send_message_t nextEvent;
+                                if (xQueuePeek(spp_send_queue, (void*)&nextEvent, ble_get_delay_multi())) {
+                                    if (nextEvent.msg_length + sizeof(ble_header_t) + dataLength <= (spp_mtu_size - 3)) {
+                                        if (xQueueReceive(spp_send_queue, &nextEvent, 0) == pdTRUE) {
+                                            uint32_t nextDataLength = dataLength + nextEvent.msg_length + sizeof(ble_header_t);
+                                            uint8_t* nextData = (uint8_t*)malloc(sizeof(uint8_t) * nextDataLength);
+                                            if (nextData == NULL) {
+                                                free(nextEvent.buffer);
+                                                break;
+                                            }
+                                            memset(nextData, 0x0, nextDataLength);
+                                            memcpy(nextData, data, dataLength);
+                                            memcpy(nextData + dataLength + sizeof(ble_header_t), nextEvent.buffer, nextEvent.msg_length);
+                                            free(nextEvent.buffer);
+
+                                            ble_header_t* nHeader = (ble_header_t*)(nextData + dataLength);
+                                            nHeader->hdID = BLE_HEADER_ID;
+                                            nHeader->cmdFlags = nextEvent.flags;
+                                            nHeader->cmdSize = nextEvent.msg_length;
+                                            nHeader->rxID = nextEvent.rxID;
+                                            nHeader->txID = nextEvent.txID;
+
+                                            free(data);
+                                            data = nextData;
+                                            dataLength = nextDataLength;
+                                        } else { break; }
+                                    } else { break; }
+                                } else { break; }
+                            }
+
                             // Always use the registered interface handle to avoid 0xFF panics
                             esp_gatt_if_t target_if = (spp_gatts_if != ESP_GATT_IF_NONE) ? 
                                                       spp_gatts_if : spp_profile_tab[SPP_PROFILE_APP_IDX].gatts_if;
 
                             if (target_if != ESP_GATT_IF_NONE && spp_conn_id != 0xffff) {
-                                ESP_LOGI(BLE_TAG, "Transmitting BLE packet: %ld bytes (flags: 0x%02X)", (long)event.msg_length, event.flags);
-                                esp_ble_gatts_send_indicate(target_if, spp_conn_id, 
-                                                            spp_handle_table[SPP_IDX_SPP_DATA_NTY_VAL], 
-                                                            dataLength, data, false);
-                            } else {
-                                ESP_LOGE(BLE_TAG, "Cannot send: Invalid target interface (0x%02X) or conn_id (%d)", target_if, spp_conn_id);
-                            }
+                                
+                                // BLE FRAGMENTATION LOGIC
+                                // If the payload is larger than the negotiated MTU size, cut it into chunks
+                                if (dataLength <= (spp_mtu_size - 3)) {
+                                    esp_ble_gatts_send_indicate(target_if, spp_conn_id, spp_handle_table[SPP_IDX_SPP_DATA_NTY_VAL], dataLength, data, false);
+                                }
+                                else {
+                                    uint16_t pack_size = spp_mtu_size - 3;
+                                    uint8_t* data_chunk = (uint8_t*)malloc(pack_size * sizeof(uint8_t));
+                                    if (data_chunk == NULL) {
+                                        free(data);
+                                        break;
+                                    }
 
+                                    // Send the very first chunk
+                                    uint16_t data_pos = pack_size;
+                                    memcpy(data_chunk, data, pack_size);
+                                    data_chunk[1] |= BLE_COMMAND_FLAG_SPLIT_PK;
+                                    esp_ble_gatts_send_indicate(target_if, spp_conn_id, spp_handle_table[SPP_IDX_SPP_DATA_NTY_VAL], pack_size, data_chunk, false);
+                                    vTaskDelay(ble_get_delay_send());
+
+                                    // Send remaining chunks
+                                    uint8_t chunk_num = 1;
+                                    while (data_pos < dataLength)
+                                    {
+                                        uint16_t data_len = dataLength - data_pos;
+                                        if (data_len > pack_size - 2)
+                                            data_len = pack_size - 2;
+
+                                        data_chunk[0] = BLE_PARTIAL_ID;
+                                        data_chunk[1] = chunk_num++;
+                                        memcpy(data_chunk + 2, data + data_pos, data_len);
+                                        data_pos += data_len;
+                                        esp_ble_gatts_send_indicate(target_if, spp_conn_id, spp_handle_table[SPP_IDX_SPP_DATA_NTY_VAL], data_len + 2, data_chunk, false);
+                                    }
+                                    free(data_chunk);
+                                }
+                            }
                             free(data);
                             vTaskDelay(pdMS_TO_TICKS(ble_get_delay_send()));
                         }
@@ -276,7 +338,6 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
 
     switch (event) {
         case ESP_GATTS_REG_EVT:
-            // Lock the active registered interface handle
             spp_gatts_if = gatts_if;
             spp_profile_tab[SPP_PROFILE_APP_IDX].gatts_if = gatts_if;
 
@@ -291,21 +352,12 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
             if(p_data->write.is_prep == false){
                 if(res == SPP_IDX_SPP_DATA_NTF_CFG){
                     if((p_data->write.len == 2)&&(p_data->write.value[0] == 0x01)&&(p_data->write.value[1] == 0x00)){
-                        ESP_LOGI(BLE_TAG, "Client subscribed to notifications");
                         enable_notification();
                     }else if((p_data->write.len == 2)&&(p_data->write.value[0] == 0x00)&&(p_data->write.value[1] == 0x00)){
-                        ESP_LOGI(BLE_TAG, "Client unsubscribed from notifications");
                         disable_notification();
                     }
                 }
                 else if(res == SPP_IDX_SPP_DATA_RECV_VAL){
-                    char hex_dump[96] = {0};
-                    int max_bytes = (p_data->write.len > 24) ? 24 : p_data->write.len;
-                    for (int b = 0; b < max_bytes; b++) {
-                        snprintf(hex_dump + (b * 3), 4, "%02X ", p_data->write.value[b]);
-                    }
-                    ESP_LOGI(BLE_TAG, "Incoming BLE write (%d bytes): %s", p_data->write.len, hex_dump);
-
                     server_callbacks.data_received((char *)(p_data->write.value), p_data->write.len);
                 }
             }
@@ -317,7 +369,6 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         case ESP_GATTS_CONNECT_EVT:
             spp_conn_id = p_data->connect.conn_id;
 
-            // Only update spp_gatts_if if a valid profile interface was provided
             if (gatts_if != ESP_GATT_IF_NONE) {
                 spp_gatts_if = gatts_if;
             }
@@ -327,7 +378,6 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
             rMUTEX(ble_settings_mutex);
             memcpy(&spp_remote_bda, &p_data->connect.remote_bda, sizeof(esp_bd_addr_t));
             xSemaphoreGive(ble_congested);
-            ESP_LOGI(BLE_TAG, "Simos Tools paired & connected (conn_id: %d, gatts_if: 0x%02X)", spp_conn_id, spp_gatts_if);
             break;
         case ESP_GATTS_DISCONNECT_EVT:
             tMUTEX(ble_settings_mutex);
@@ -336,7 +386,6 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
             disable_notification();
             spp_mtu_size = DEFAULT_MTU_SIZE;
             spp_conn_id = 0xffff;
-            ESP_LOGI(BLE_TAG, "Simos Tools disconnected");
             if(ble_allow_connection())
                 ESP_ERROR_CHECK(esp_ble_gap_start_advertising(&spp_adv_params));
             break;
