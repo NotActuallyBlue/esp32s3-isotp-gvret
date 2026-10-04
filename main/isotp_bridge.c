@@ -62,7 +62,7 @@ void isotp_user_debug(const char* message, ...)
     ESP_LOGD(BRIDGE_TAG, "ISOTP: %s", message);
 }
 
-void send_packet(uint32_t txID, uint32_t rxID, uint8_t flags, const void* src, size_t size)
+void bridge_send_packet(uint32_t txID, uint32_t rxID, uint8_t flags, const void* src, size_t size)
 {
     if(ble_connected()) {
         ble_send(txID, rxID, flags, src, size);
@@ -103,7 +103,7 @@ static void isotp_processing_task(void *arg)
                     uint32_t txID = link_ptr->receive_arbitration_id;
                     uint32_t rxID = link_ptr->send_arbitration_id;
                 rMUTEX(isotp_link_container->data_mutex);
-                send_packet(txID, rxID, 0, payload_buf, out_size);
+                bridge_send_packet(txID, rxID, 0, payload_buf, out_size);
             }
 
             esp_task_wdt_reset();
@@ -250,7 +250,7 @@ bool16 parse_packet(ble_header_t* header, uint8_t* data)
     {
         uint8_t auth_ok = 0xFF;
         ESP_LOGI(BRIDGE_TAG, "Simos Tools Auth Handshake (0x%02X) -> Sending 0xFF (ACCEPTED)", header->cmdFlags);
-        send_packet(0xFF, 0xFF, 0xFF, &auth_ok, sizeof(auth_ok));
+        bridge_send_packet(0xFF, 0xFF, 0xFF, &auth_ok, sizeof(auth_ok));
         return true;
     }
 
@@ -266,42 +266,42 @@ bool16 parse_packet(ble_header_t* header, uint8_t* data)
             {
                 case BRG_SETTING_ISOTP_STMIN: {
                     uint16_t stmin = 0;
-                    send_packet(header->rxID, header->txID, BLE_COMMAND_FLAG_SETTINGS | BRG_SETTING_ISOTP_STMIN, &stmin, sizeof(uint16_t));
+                    bridge_send_packet(header->rxID, header->txID, BLE_COMMAND_FLAG_SETTINGS | BRG_SETTING_ISOTP_STMIN, &stmin, sizeof(uint16_t));
                     break;
                 }
                 case BRG_SETTING_LED_COLOR: {
-                    send_packet(0, 0, BLE_COMMAND_FLAG_SETTINGS | BRG_SETTING_LED_COLOR, &virtual_led_color, sizeof(uint32_t));
+                    bridge_send_packet(0, 0, BLE_COMMAND_FLAG_SETTINGS | BRG_SETTING_LED_COLOR, &virtual_led_color, sizeof(uint32_t));
                     break;
                 }
                 case BRG_SETTING_PERSIST_DELAY: {
                     uint16_t delay = persist_get_delay();
-                    send_packet(0, 0, BLE_COMMAND_FLAG_SETTINGS | BRG_SETTING_PERSIST_DELAY, &delay, sizeof(uint16_t));
+                    bridge_send_packet(0, 0, BLE_COMMAND_FLAG_SETTINGS | BRG_SETTING_PERSIST_DELAY, &delay, sizeof(uint16_t));
                     break;
                 }
                 case BRG_SETTING_PERSIST_Q_DELAY: {
                     uint16_t delay = persist_get_q_delay();
-                    send_packet(0, 0, BLE_COMMAND_FLAG_SETTINGS | BRG_SETTING_PERSIST_Q_DELAY, &delay, sizeof(uint16_t));
+                    bridge_send_packet(0, 0, BLE_COMMAND_FLAG_SETTINGS | BRG_SETTING_PERSIST_Q_DELAY, &delay, sizeof(uint16_t));
                     break;
                 }
                 case BRG_SETTING_BLE_SEND_DELAY: {
                     uint16_t delay = ble_get_delay_send();
-                    send_packet(0, 0, BLE_COMMAND_FLAG_SETTINGS | BRG_SETTING_BLE_SEND_DELAY, &delay, sizeof(uint16_t));
+                    bridge_send_packet(0, 0, BLE_COMMAND_FLAG_SETTINGS | BRG_SETTING_BLE_SEND_DELAY, &delay, sizeof(uint16_t));
                     break;
                 }
                 case BRG_SETTING_BLE_MULTI_DELAY: {
                     uint16_t delay = ble_get_delay_multi();
-                    send_packet(0, 0, BLE_COMMAND_FLAG_SETTINGS | BRG_SETTING_BLE_MULTI_DELAY, &delay, sizeof(uint16_t));
+                    bridge_send_packet(0, 0, BLE_COMMAND_FLAG_SETTINGS | BRG_SETTING_BLE_MULTI_DELAY, &delay, sizeof(uint16_t));
                     break;
                 }
                 case BRG_SETTING_GAP: {
                     char str[MAX_GAP_LENGTH+1];
                     ble_get_gap_name(str);
-                    send_packet(0, 0, BLE_COMMAND_FLAG_SETTINGS | BRG_SETTING_GAP, str, strlen(str));
+                    bridge_send_packet(0, 0, BLE_COMMAND_FLAG_SETTINGS | BRG_SETTING_GAP, str, strlen(str));
                     break;
                 }
                 default: {
                     uint32_t zero_ack = 0;
-                    send_packet(0, 0, header->cmdFlags, &zero_ack, sizeof(zero_ack));
+                    bridge_send_packet(0, 0, header->cmdFlags, &zero_ack, sizeof(zero_ack));
                     break;
                 }
             }
