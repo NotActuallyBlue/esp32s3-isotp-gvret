@@ -27,6 +27,7 @@ typedef int16_t                         bool16;
 
 // Settings / NVS keys
 #define BRG_SETTING_ISOTP_STMIN         1
+#define BRG_SETTING_LED_COLOR           2  // Restored for Simos Tools handshake
 #define BRG_SETTING_PERSIST_DELAY       3
 #define BRG_SETTING_PERSIST_Q_DELAY     4
 #define BRG_SETTING_BLE_SEND_DELAY      5
@@ -36,22 +37,19 @@ typedef int16_t                         bool16;
 
 // FreeRTOS Task Priorities & Stacks
 #define TASK_STACK_SIZE                 3072
-#define TWAI_TASK_PRIO                  3 // Rapid CAN processing for ISO15765-2
-#define ISOTP_TSK_PRIO                  2 // ISO-TP message pump
-#define MAIN_TSK_PRIO                   1 // Coordinated delivery with BLE stack
+#define TWAI_TASK_PRIO                  3
+#define ISOTP_TSK_PRIO                  2
+#define MAIN_TSK_PRIO                   1
 #define PERSIST_TSK_PRIO                0
 #define HANDLER_TSK_PRIO                0
 #define UART_TSK_PRIO                   1
 
 // ==========================================
-// Adafruit Feather ESP32-S3 TFT Pinout
+// LilyGo T-Display-S3 Pinout
 // ==========================================
-// CAN Transceiver Interface (Adafruit CAN Pal)
-#define CAN_TX_PORT                     5  // Feather GPIO 5 -> CAN Pal TX
-#define CAN_RX_PORT                     4  // Feather GPIO 4 -> CAN Pal RX
-
-// Hardware User Button
-#define BOOT_BUTTON_PIN                 0  // Feather Onboard BOOT Button (SW)
+#define CAN_TX_PORT                     17
+#define CAN_RX_PORT                     18
+#define BOOT_BUTTON_PIN                 0
 
 // Queue and Buffer Capacities
 #define ISOTP_QUEUE_SIZE                64
@@ -69,7 +67,6 @@ typedef int16_t                         bool16;
 #define TIMEOUT_UARTPACKET              1
 
 // Security & BLE Configuration
-//#define PASSWORD_CHECK 
 #define MAX_PASSWORD_LENGTH             64
 #define PASSWORD_KEY                    "Password"
 #define PASSWORD_DEFAULT                "BLE2"
@@ -95,7 +92,6 @@ typedef int16_t                         bool16;
 #define UART_BAUD_RATE                  250000
 #define UART_BUFFER_SIZE                8192
 #define UART_INTERNAL_BUFFER_SIZE       2048
-//#define UART_ECHO
 
 // Persistence & Buffer Timing
 #define PERSIST_COUNT                   2

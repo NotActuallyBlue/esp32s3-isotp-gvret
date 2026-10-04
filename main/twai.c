@@ -21,7 +21,7 @@ static const twai_general_config_t g_config = {
     .rx_io = CAN_RX_PORT,
     .clkout_io = CAN_CLK_IO,
     .bus_off_io = CAN_BUS_IO,
-    .tx_queue_len = 0,
+    .tx_queue_len = 16,                     // Enable hardware TX buffer
     .rx_queue_len = CAN_INTERNAL_BUFFER_SIZE,
     .alerts_enabled = CAN_ALERTS,
     .clkout_divider = CAN_CLK_DIVIDER,
@@ -58,7 +58,6 @@ void twai_init()
 {
     twai_deinit();
 
-    // Init synchronization mutexes
     twai_receive_task_mutex = xSemaphoreCreateMutex();
     twai_alert_task_mutex   = xSemaphoreCreateMutex();
     twai_bus_off_mutex      = xSemaphoreCreateMutex();
@@ -103,7 +102,6 @@ void twai_start_task()
 {
     twai_stop_task();
 
-    // Install TWAI driver
     ESP_ERROR_CHECK(twai_driver_install(&g_config, &t_config, &f_config));
     ESP_LOGI(TWAI_TAG, "Driver installed");
     ESP_ERROR_CHECK(twai_start());
@@ -145,18 +143,15 @@ void twai_stop_task()
 
 void twai_send_isotp_message(IsoTpLinkContainer* link, twai_message_t* msg)
 {
-    ESP_LOGD(TWAI_TAG, "twai_receive_task: link match");
     tMUTEX(link->data_mutex);
         isotp_on_can_message(&link->link, msg->data, msg->data_length_code);
     rMUTEX(link->data_mutex);
 
-    ESP_LOGD(TWAI_TAG, "twai_receive_task: giving wait_for_isotp_data_sem");
     xSemaphoreGive(link->wait_for_isotp_data_sem);
 }
 
 void twai_receive_task(void *arg)
 {
-    // Subscribe to WDT
     ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
     ESP_ERROR_CHECK(esp_task_wdt_status(NULL));
 
@@ -167,7 +162,6 @@ void twai_receive_task(void *arg)
         while (twai_allow_run_task())
         {
             if (twai_receive(&twai_rx_msg, pdMS_TO_TICKS(TIMEOUT_LONG)) == ESP_OK) {
-                ESP_LOGD(TWAI_TAG, "Received TWAI %08X and length %08X", twai_rx_msg.identifier, twai_rx_msg.data_length_code);
                 ch_take_can_timer_sem();
         
                 if (twai_rx_msg.identifier < 0x500) {
@@ -189,14 +183,12 @@ void twai_receive_task(void *arg)
                 }
             }
 
-            // Reset WDT and yield to tasks
             esp_task_wdt_reset();
             taskYIELD();
         }
         ESP_LOGI(TWAI_TAG, "Receive task stopped");
     rMUTEX(twai_receive_task_mutex);
 
-    // Unsubscribe from WDT and delete task
     ESP_ERROR_CHECK(esp_task_wdt_delete(NULL));
     vTaskDelete(NULL);
 }
@@ -205,12 +197,12 @@ void twai_send(twai_message_t *twai_tx_msg)
 {
     tMUTEX(twai_bus_off_mutex);
     rMUTEX(twai_bus_off_mutex);
-    while (twai_transmit(twai_tx_msg, portMAX_DELAY) == ESP_FAIL);
+    // Non-blocking timeout instead of infinite while loop
+    twai_transmit(twai_tx_msg, pdMS_TO_TICKS(50));
 }
 
 void twai_alert_task(void* arg)
 {
-    // Subscribe to WDT
     ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
     ESP_ERROR_CHECK(esp_task_wdt_status(NULL));
 
@@ -222,18 +214,18 @@ void twai_alert_task(void* arg)
 
             if (twai_read_alerts(&alerts, pdMS_TO_TICKS(TIMEOUT_LONG)) == ESP_OK) {
                 if (alerts & TWAI_ALERT_ABOVE_ERR_WARN) {
-                    ESP_LOGI(TWAI_TAG, "Surpassed Error Warning Limit");
+                    ESP_LOGW(TWAI_TAG, "Surpassed Error Warning Limit");
                 }
 
                 if (alerts & TWAI_ALERT_ERR_PASS) {
-                    ESP_LOGI(TWAI_TAG, "Entered Error Passive state");
+                    ESP_LOGW(TWAI_TAG, "Entered Error Passive state");
                 }
 
                 if (alerts & TWAI_ALERT_BUS_OFF) {
-                    ESP_LOGI(TWAI_TAG, "Bus Off state");
+                    ESP_LOGE(TWAI_TAG, "Bus Off state detected!");
                     if (xSemaphoreTake(twai_bus_off_mutex, pdMS_TO_TICKS(TIMEOUT_NORMAL)) == pdTRUE) {
                         ESP_LOGW(TWAI_TAG, "Initiate bus recovery");
-                        ESP_ERROR_CHECK(twai_initiate_recovery());    // Needs 128 occurrences of bus free signal
+                        ESP_ERROR_CHECK(twai_initiate_recovery());
                     }
                 }
 
@@ -244,14 +236,12 @@ void twai_alert_task(void* arg)
                 }
             }
 
-            // Reset WDT and yield to tasks
             esp_task_wdt_reset();
             taskYIELD();
         }
         ESP_LOGI(TWAI_TAG, "Alert task stopped");
     rMUTEX(twai_alert_task_mutex);
 
-    // Unsubscribe from WDT and delete task
     ESP_ERROR_CHECK(esp_task_wdt_delete(NULL));
     vTaskDelete(NULL);
 }

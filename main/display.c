@@ -4,7 +4,6 @@
 #include "freertos/task.h"
 #include "freertos/timers.h"
 #include "driver/gpio.h"
-#include "driver/spi_master.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_panel_ops.h"
@@ -12,20 +11,28 @@
 #include "display.h"
 
 #define TAG "DISPLAY"
-#define LCD_HOST               SPI2_HOST
 
-// Verified Adafruit ESP32-S3 TFT Feather Pinout
-#define PIN_NUM_LCD_PWR        GPIO_NUM_21
-#define PIN_NUM_BK_LIGHT       GPIO_NUM_45
-#define PIN_NUM_SCLK           GPIO_NUM_36
-#define PIN_NUM_MOSI           GPIO_NUM_35
-#define PIN_NUM_LCD_DC         GPIO_NUM_39
-#define PIN_NUM_LCD_CS         GPIO_NUM_7
-#define PIN_NUM_LCD_RST        GPIO_NUM_40
+// LilyGo T-Display-S3 Parallel 8080 Pinout
+#define PIN_NUM_LCD_PWR         GPIO_NUM_15
+#define PIN_NUM_BK_LIGHT        GPIO_NUM_38
+#define PIN_NUM_LCD_CS          GPIO_NUM_6
+#define PIN_NUM_LCD_DC          GPIO_NUM_7
+#define PIN_NUM_LCD_WR          GPIO_NUM_8
+#define PIN_NUM_LCD_RD          GPIO_NUM_9
+#define PIN_NUM_LCD_RST         GPIO_NUM_5
 
-// Portrait Dimensions
-#define LCD_H_RES              135
-#define LCD_V_RES              240
+#define PIN_NUM_LCD_D0          GPIO_NUM_39
+#define PIN_NUM_LCD_D1          GPIO_NUM_40
+#define PIN_NUM_LCD_D2          GPIO_NUM_41
+#define PIN_NUM_LCD_D3          GPIO_NUM_42
+#define PIN_NUM_LCD_D4          GPIO_NUM_45
+#define PIN_NUM_LCD_D5          GPIO_NUM_46
+#define PIN_NUM_LCD_D6          GPIO_NUM_47
+#define PIN_NUM_LCD_D7          GPIO_NUM_48
+
+// LilyGo T-Display-S3 Resolution
+#define LCD_H_RES               170
+#define LCD_V_RES               320
 
 // Global Traffic Counters
 volatile uint32_t g_rx_count = 0;
@@ -87,7 +94,7 @@ static const uint8_t font8x8_basic[95][8] = {
     {0x76,0xDC,0x00,0x00,0x00,0x00,0x00,0x00}
 };
 
-// 1. Bluetooth Icon
+// Bluetooth Icon (32x32)
 static const uint8_t icon_bluetooth_32x32[] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
     0x00, 0x03, 0x80, 0x00, 0x00, 0x03, 0xc0, 0x00, 0x00, 0x03, 0xe0, 0x00, 0x00, 0x03, 0xf0, 0x00, 
@@ -99,7 +106,7 @@ static const uint8_t icon_bluetooth_32x32[] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
 
-// 2. USB-C / Pill Icon
+// USB-C / Pill Icon (32x32)
 static const uint8_t icon_usb_32x32[] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7f, 0xfe, 0x00, 
     0x00, 0x40, 0x02, 0x00, 0x00, 0x40, 0x02, 0x00, 0x00, 0x4e, 0x72, 0x00, 0x00, 0x4e, 0x72, 0x00, 
@@ -111,7 +118,7 @@ static const uint8_t icon_usb_32x32[] = {
     0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
 
-// Fill a flat rectangle (uses static buffer to prevent DMA reading overwritten stack memory)
+// Fill a flat rectangle
 static void display_fill_rect(int x, int y, int w, int h, uint16_t color)
 {
     if (x < 0) { w += x; x = 0; }
@@ -128,21 +135,20 @@ static void display_fill_rect(int x, int y, int w, int h, uint16_t color)
     }
 }
 
-// Global utility so main/mode_mgr can still clear the screen
 void display_clear(uint16_t color)
 {
     display_fill_rect(0, 0, LCD_H_RES, LCD_V_RES, color);
 }
 
-// Draw a single character scaled (static buffer prevents stack corruption)
+// Draw a single character scaled
 static void display_draw_char_scaled(int x, int y, char c, uint16_t color, uint16_t bg, int scale)
 {
     if (c < 32 || c > 126) c = ' ';
     const uint8_t *glyph = font8x8_basic[c - 32];
     int char_w = 8 * scale;
     
-    if (char_w > 16) return; 
-    static uint16_t line_buf[16]; 
+    if (char_w > 32) return; 
+    static uint16_t line_buf[32]; 
 
     for (int r = 0; r < 8; r++) {
         uint8_t bits = glyph[r];
@@ -176,7 +182,7 @@ static void display_draw_string_centered(int y, const char *str, uint16_t color,
     display_draw_string_scaled((start_x < 0) ? 0 : start_x, y, str, color, bg, scale);
 }
 
-// Draw 32x32 icon (static buffer prevents stack corruption)
+// Draw 32x32 icon scaled
 static void display_draw_icon(int x, int y, const uint8_t *bitmap, uint16_t color, uint16_t bg, int scale)
 {
     int icon_dim = 32 * scale;
@@ -224,17 +230,20 @@ void display_update_traffic(uint32_t rx_count, uint32_t tx_count)
 {
     display_bump_timer();
 
-    int start_y = 172;
+    int start_y = 225;
     char rx_str[32];
     char tx_str[32];
 
     snprintf(rx_str, sizeof(rx_str), "RX: %lu", rx_count);
     snprintf(tx_str, sizeof(tx_str), "TX: %lu", tx_count);
 
-    // Clear full width (0..135) all the way down to the bottom border (240)
     display_fill_rect(0, start_y, LCD_H_RES, LCD_V_RES - start_y, COLOR_BLACK);
-    display_draw_string_centered(start_y + 6, rx_str, COLOR_GREEN, COLOR_BLACK, 1);
-    display_draw_string_centered(start_y + 26, tx_str, COLOR_CYAN, COLOR_BLACK, 1);
+
+    int scale_rx = (strlen(rx_str) * 16 <= LCD_H_RES) ? 2 : 1;
+    int scale_tx = (strlen(tx_str) * 16 <= LCD_H_RES) ? 2 : 1;
+
+    display_draw_string_centered(start_y + 15, rx_str, COLOR_GREEN, COLOR_BLACK, scale_rx);
+    display_draw_string_centered(start_y + 45, tx_str, COLOR_CYAN, COLOR_BLACK, scale_tx);
 }
 
 static void display_traffic_task(void *pvParameters)
@@ -260,22 +269,24 @@ void display_set_mode_view(const char *mode_title, display_icon_t icon, const ch
     display_bump_timer();
     display_clear(COLOR_BLACK);
 
-    int scale = (strlen(mode_title) <= 8) ? 2 : 1;
-    display_draw_string_centered((scale == 2) ? 14 : 18, mode_title, COLOR_WHITE, COLOR_BLACK, scale);
+    int scale = (strlen(mode_title) <= 9) ? 2 : 1;
+    display_draw_string_centered((scale == 2) ? 20 : 25, mode_title, COLOR_WHITE, COLOR_BLACK, scale);
 
-    int icon_x = 35;
-    int icon_y = 48;
+    int icon_x = (LCD_H_RES - 64) / 2;
+    int icon_y = 65;
     if (icon == ICON_BLUETOOTH || icon == ICON_OBD) {
         display_draw_icon(icon_x, icon_y, icon_bluetooth_32x32, state_color, COLOR_BLACK, 2);
     } else if (icon == ICON_USB) {
         display_draw_icon(icon_x, icon_y, icon_usb_32x32, state_color, COLOR_BLACK, 2);
     }
 
-    int pill_y = 130;
-    int pill_h = 32;
-    display_fill_rect(10, pill_y, 115, pill_h, state_color);
+    int pill_y = 155;
+    int pill_h = 36;
+    int pill_w = 140;
+    int pill_x = (LCD_H_RES - pill_w) / 2;
+    display_fill_rect(pill_x, pill_y, pill_w, pill_h, state_color);
 
-    int status_scale = (strlen(status_str) <= 7) ? 2 : 1;
+    int status_scale = (strlen(status_str) <= 8) ? 2 : 1;
     display_draw_string_centered(pill_y + (pill_h - (8 * status_scale)) / 2, status_str, COLOR_BLACK, state_color, status_scale);
 
     display_update_traffic(g_rx_count, g_tx_count);
@@ -305,15 +316,23 @@ void display_set_status(const char *transport, const char *status_msg, uint16_t 
 
 void display_init(void)
 {
+    // 1. Enable LilyGo onboard power supply (GPIO 15)
     gpio_reset_pin(PIN_NUM_LCD_PWR);
     gpio_set_direction(PIN_NUM_LCD_PWR, GPIO_MODE_OUTPUT);
     gpio_set_level(PIN_NUM_LCD_PWR, 1);
 
+    // 2. Keep RD (GPIO 9) HIGH so ST7789 does not stay in read cycle
+    gpio_reset_pin(PIN_NUM_LCD_RD);
+    gpio_set_direction(PIN_NUM_LCD_RD, GPIO_MODE_OUTPUT);
+    gpio_set_level(PIN_NUM_LCD_RD, 1);
+
+    // 3. Configure Backlight (GPIO 38)
     gpio_reset_pin(PIN_NUM_BK_LIGHT);
     gpio_set_direction(PIN_NUM_BK_LIGHT, GPIO_MODE_OUTPUT);
     gpio_set_level(PIN_NUM_BK_LIGHT, 1);
     display_is_on = true;
 
+    // 4. Hardware Reset toggle on GPIO 5
     gpio_reset_pin(PIN_NUM_LCD_RST);
     gpio_set_direction(PIN_NUM_LCD_RST, GPIO_MODE_OUTPUT);
     gpio_set_level(PIN_NUM_LCD_RST, 0);
@@ -321,42 +340,63 @@ void display_init(void)
     gpio_set_level(PIN_NUM_LCD_RST, 1);
     vTaskDelay(pdMS_TO_TICKS(150));
 
-    spi_bus_config_t buscfg = {
-        .sclk_io_num = PIN_NUM_SCLK,
-        .mosi_io_num = PIN_NUM_MOSI,
-        .miso_io_num = -1,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-        .max_transfer_sz = LCD_V_RES * 20 * sizeof(uint16_t),
-    };
-    ESP_ERROR_CHECK(spi_bus_initialize(LCD_HOST, &buscfg, SPI_DMA_CH_AUTO));
-
-    esp_lcd_panel_io_handle_t io_handle = NULL;
-    esp_lcd_panel_io_spi_config_t io_config = {
+    // 5. Configure Intel 8080 8-bit Parallel Bus
+    esp_lcd_i80_bus_handle_t i80_bus = NULL;
+    esp_lcd_i80_bus_config_t bus_config = {
+        .clk_src = LCD_CLK_SRC_DEFAULT,
         .dc_gpio_num = PIN_NUM_LCD_DC,
+        .wr_gpio_num = PIN_NUM_LCD_WR,
+        .data_gpio_nums = {
+            PIN_NUM_LCD_D0,
+            PIN_NUM_LCD_D1,
+            PIN_NUM_LCD_D2,
+            PIN_NUM_LCD_D3,
+            PIN_NUM_LCD_D4,
+            PIN_NUM_LCD_D5,
+            PIN_NUM_LCD_D6,
+            PIN_NUM_LCD_D7,
+        },
+        .bus_width = 8,
+        .max_transfer_bytes = LCD_H_RES * 40 * sizeof(uint16_t),
+    };
+    ESP_ERROR_CHECK(esp_lcd_new_i80_bus(&bus_config, &i80_bus));
+
+    // 6. Configure IO handle
+    esp_lcd_panel_io_handle_t io_handle = NULL;
+    esp_lcd_panel_io_i80_config_t io_config = {
         .cs_gpio_num = PIN_NUM_LCD_CS,
-        .pclk_hz = 20 * 1000 * 1000,
+        .pclk_hz = 10 * 1000 * 1000, // Stable 10 MHz pixel clock
+        .trans_queue_depth = 10,
+        .dc_levels = {
+            .dc_idle_level = 0,
+            .dc_cmd_level = 0,
+            .dc_dummy_level = 0,
+            .dc_data_level = 1,
+        },
+        .flags = {
+            .swap_color_bytes = 0, // Codebase color definitions are pre-swapped
+        },
         .lcd_cmd_bits = 8,
         .lcd_param_bits = 8,
-        .spi_mode = 0,
-        .trans_queue_depth = 10,
     };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_config, &io_handle));
+    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i80(i80_bus, &io_config, &io_handle));
 
+    // 7. Instantiate ST7789 panel
     esp_lcd_panel_dev_config_t panel_config = {
-        .reset_gpio_num = -1,
+        .reset_gpio_num = PIN_NUM_LCD_RST,
         .bits_per_pixel = 16,
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle));
 
+    ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel_handle, true));
 
     ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(panel_handle, false));
-    ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle, true, true));
+    ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle, false, false));
 
-    // ST7789 Hardware Offset fix to stop the rainbow artifact edge
-    ESP_ERROR_CHECK(esp_lcd_panel_set_gap(panel_handle, 53, 40));
+    // ST7789 170x320 panel memory offset
+    ESP_ERROR_CHECK(esp_lcd_panel_set_gap(panel_handle, 35, 0));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
 
     display_clear(COLOR_BLACK);
