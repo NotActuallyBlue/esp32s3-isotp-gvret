@@ -21,6 +21,7 @@
 #include "display.h"
 #include "mode_mgr.h"
 #include "gvret.h"
+#include "flashlog.h"
 
 SemaphoreHandle_t sync_task_sem = NULL;
 
@@ -47,6 +48,7 @@ static void app_ble_disconnected(void) {
 
 void app_main(void)
 {
+    flashlog_init();
     ESP_LOGI(MAIN_TAG, "Application starting");
 
     // Initialize display immediately

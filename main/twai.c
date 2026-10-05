@@ -11,6 +11,7 @@
 #include "constants.h"
 #include "connection_handler.h"
 #include "twai.h"
+#include "persist.h"
 #include "driver/gpio.h"
 
 #define TWAI_TAG        "TWAI"
@@ -143,6 +144,7 @@ void twai_stop_task()
 
 void twai_send_isotp_message(IsoTpLinkContainer* link, twai_message_t* msg)
 {
+    PERSIST_LOG_WINDOW(TWAI_TAG, "CAN RX <- ID: 0x%03lX, DLC: %d, PCI: 0x%02X", (unsigned long)msg->identifier, msg->data_length_code, msg->data[0]);
     tMUTEX(link->data_mutex);
         isotp_on_can_message(&link->link, msg->data, msg->data_length_code);
     rMUTEX(link->data_mutex);
@@ -198,7 +200,10 @@ void twai_send(twai_message_t *twai_tx_msg)
     tMUTEX(twai_bus_off_mutex);
     rMUTEX(twai_bus_off_mutex);
     // Non-blocking timeout instead of infinite while loop
-    twai_transmit(twai_tx_msg, pdMS_TO_TICKS(50));
+    esp_err_t err = twai_transmit(twai_tx_msg, pdMS_TO_TICKS(50));
+    if (err != ESP_OK) {
+        ESP_LOGW(TWAI_TAG, "CAN TX failed (ID: 0x%03lX): %s", (unsigned long)twai_tx_msg->identifier, esp_err_to_name(err));
+    }
 }
 
 void twai_alert_task(void* arg)

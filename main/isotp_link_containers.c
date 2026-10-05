@@ -41,10 +41,6 @@ void configure_isotp_links()
         ecu_isotp_link_container->send_buf, ecu_isotp_link_container->buffer_size,
         ecu_isotp_link_container->recv_buf, ecu_isotp_link_container->buffer_size
     );
-    
-    // Tune ISO-TP flow control parameters for Simos 18 stability
-    ecu_isotp_link_container->link.default_block_size = 8;  // Limit block size to 8 frames
-    ecu_isotp_link_container->link.st_min = 5000;           // 5ms separation time (in microseconds)
 
 	// TCU
     tcu_isotp_link_container->number = 1;
@@ -62,10 +58,6 @@ void configure_isotp_links()
         tcu_isotp_link_container->send_buf, tcu_isotp_link_container->buffer_size,
         tcu_isotp_link_container->recv_buf, tcu_isotp_link_container->buffer_size
     );
-
-    // Tune TCU flow control parameters to prevent DSG timeouts
-    tcu_isotp_link_container->link.default_block_size = 8;
-    tcu_isotp_link_container->link.st_min = 5000;
 
 	// HALDEX
 	haldex_isotp_link_container->number = 2;

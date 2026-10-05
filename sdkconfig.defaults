@@ -12,3 +12,17 @@ CONFIG_NEWLIB_ENABLE_TEDIOUS_TEST_CODE=n
 # Hardware USB-Serial/JTAG console
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# Custom partition table with a "log" partition (see flashlog.c)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# Keep the TWAI ISR running while the flash log writes
+CONFIG_TWAI_ISR_IN_IRAM_LEGACY=y
+
+# Millisecond log timestamps (RTOS ticks are only 10 ms here)
+CONFIG_LOG_TIMESTAMP_SOURCE_SYSTEM=y
+
+# 1 ms RTOS tick so short waits and delays are not rounded to 10 ms
+CONFIG_FREERTOS_HZ=1000

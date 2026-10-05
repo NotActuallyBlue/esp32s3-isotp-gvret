@@ -13,6 +13,7 @@
 #include "connection_handler.h"
 #include "isotp_bridge.h"
 #include "esp_timer.h"
+#include "display.h"
 
 #define PERSIST_TAG	"Persist"
 
@@ -156,13 +157,33 @@ uint16_t persist_enabled()
 	return msg_enabled;
 }
 
+static volatile uint32_t persist_enabled_at_ms = 0;
+
+bool persist_log_window(void)
+{
+	uint32_t started = persist_enabled_at_ms;
+	return started && ((esp_timer_get_time() / 1000UL) - started) < 1500;
+}
+
 void persist_set(uint16_t enable)
 {
+	if (enable)
+		persist_enabled_at_ms = (esp_timer_get_time() / 1000UL) | 1;
+
 	tMUTEX(persist_settings_mutex);
 		persist_msg_enabled = enable;
 	rMUTEX(persist_settings_mutex);
 
 	ESP_LOGI(PERSIST_TAG, "Enabled: %d", enable);
+	display_set_persist(enable);
+
+	// Wake the persist tasks so the first request goes out now instead of after their idle wait
+	if (enable) {
+		for (uint16_t i = 0; i < PERSIST_COUNT; i++) {
+			if (persist_msgs[i].send_sema)
+				xSemaphoreGive(persist_msgs[i].send_sema);
+		}
+	}
 }
 
 int16_t persist_add(uint16_t rx, uint16_t tx, const void* src, size_t size)
@@ -170,6 +191,9 @@ int16_t persist_add(uint16_t rx, uint16_t tx, const void* src, size_t size)
 	//check for valid message
 	if (!src || size == 0)
 		return false;
+
+	// Start the detailed logging window at the first PID so the whole setup burst is captured
+	persist_enabled_at_ms = (esp_timer_get_time() / 1000UL) | 1;
 
 	//set persist pointer
 	persist_t* pPersist = NULL;
@@ -237,6 +261,37 @@ void persist_clear()
 	}
 
 	ESP_LOGI(PERSIST_TAG, "Messages cleared");
+}
+
+// Clears the persist messages of the link matching rx/tx and leaves persist mode untouched.
+// If no link matches, every link is cleared.
+void persist_clear_link(uint16_t rx, uint16_t tx)
+{
+	bool16 found = false;
+	for (uint16_t d = 0; d < PERSIST_COUNT; d++) {
+		persist_t* pPersist = &persist_msgs[d];
+		tMUTEX(pPersist->data_mutex);
+			if (pPersist->rxID == rx && pPersist->txID == tx) {
+				found = true;
+				for (uint16_t i = 0; i < pPersist->count; i++) {
+					send_message_t* pMsg = &pPersist->messages[i];
+					if (pMsg->buffer) {
+						free(pMsg->buffer);
+						pMsg->buffer = NULL;
+					}
+					pMsg->msg_length = 0;
+				}
+				pPersist->position = 0;
+				pPersist->count = 0;
+			}
+		rMUTEX(pPersist->data_mutex);
+	}
+
+	if (found) {
+		ESP_LOGI(PERSIST_TAG, "Messages cleared for rx 0x%04X / tx 0x%04X", rx, tx);
+	} else {
+		persist_clear();
+	}
 }
 
 bool16 persist_send(persist_t* pPersist)

@@ -1,0 +1,6 @@
+# Name,     Type, SubType, Offset,   Size
+# Same layout as the default single-app table, plus a "log" partition for flashlog.c
+nvs,        data, nvs,     0x9000,   0x6000
+phy_init,   data, phy,     0xf000,   0x1000
+factory,    app,  factory, 0x10000,  1M
+log,        data, 0x40,    0x110000, 0xF0000

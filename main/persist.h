@@ -2,6 +2,8 @@
 #define PERSIST_H
 
 #include <stdint.h>
+#include <stdbool.h>
+#include "esp_log.h"
 
 void         persist_init(void);
 void         persist_deinit(void);
@@ -13,6 +15,11 @@ uint16_t     persist_enabled(void);
 void         persist_set(uint16_t enable);
 int16_t      persist_add(uint16_t rx, uint16_t tx, const void* src, size_t size);
 void         persist_clear(void);
+bool         persist_log_window(void);
+
+// Per-frame traffic is only logged for a short window after persist starts, to keep the flash log small
+#define PERSIST_LOG_WINDOW(tag, ...) ESP_LOG_LEVEL(persist_log_window() ? ESP_LOG_INFO : ESP_LOG_DEBUG, tag, __VA_ARGS__)
+void         persist_clear_link(uint16_t rx, uint16_t tx);
 void         persist_task(void *arg);
 void         persist_set_delay(uint16_t delay);
 void         persist_set_q_delay(uint16_t delay);

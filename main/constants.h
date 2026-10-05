@@ -67,7 +67,6 @@ typedef int16_t                         bool16;
 #define TIMEOUT_UARTPACKET              1
 
 // Security & BLE Configuration
-#define MAX_PASSWORD_LENGTH             64
 #define PASSWORD_KEY                    "Password"
 #define PASSWORD_DEFAULT                "BLE2"
 #define BLE_GAP_KEY                     "GAP"

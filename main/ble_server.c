@@ -17,6 +17,8 @@
 #include "esp_bt_defs.h"
 #include "esp_bt_main.h"
 #include "ble_server.h"
+#include "persist.h"
+#include "display.h"
 
 #define BLE_TAG                              "BLE"
 
@@ -26,7 +28,7 @@
 #define SPP_SVC_INST_ID                      0
 #define DEFAULT_MTU_SIZE                     23
 #define DEFAULT_DELAY_SEND                   0
-#define DEFAULT_DELAY_MULTI                  2
+#define DEFAULT_DELAY_MULTI                  0
 
 static const uint16_t spp_service_uuid = 0xABF0;
 #define ESP_GATT_UUID_SPP_DATA_RECEIVE       0xABF1
@@ -47,6 +49,7 @@ static bool16               ble_run_tasks                   = false;
 static ble_server_callbacks server_callbacks;
 
 static uint16_t             spp_mtu_size                    = DEFAULT_MTU_SIZE;
+static uint16_t             ble_conn_int                    = 0;
 static uint16_t             spp_conn_id                     = 0xffff;
 static esp_gatt_if_t        spp_gatts_if                    = ESP_GATT_IF_NONE;
 static QueueHandle_t        spp_send_queue                  = NULL;
@@ -205,6 +208,7 @@ void send_task(void *pvParameters)
                 if (ble_allow_run_tasks()) {
                     if (event.msg_length) {
                         if (!enable_data_ntf) {
+                            ESP_LOGW(BLE_TAG, "Notifications not enabled, dropping %d byte reply", event.msg_length);
                             free(event.buffer);
                         }
                         else
@@ -266,6 +270,11 @@ void send_task(void *pvParameters)
                             esp_gatt_if_t target_if = (spp_gatts_if != ESP_GATT_IF_NONE) ? 
                                                       spp_gatts_if : spp_profile_tab[SPP_PROFILE_APP_IDX].gatts_if;
 
+                            g_notify_count++;
+                            PERSIST_LOG_WINDOW(BLE_TAG, "BLE notify -> %lu bytes (MTU %d)", (unsigned long)dataLength, spp_mtu_size);
+                            if (target_if == ESP_GATT_IF_NONE || spp_conn_id == 0xffff) {
+                                ESP_LOGW(BLE_TAG, "No GATT interface/connection, dropping reply");
+                            }
                             if (target_if != ESP_GATT_IF_NONE && spp_conn_id != 0xffff) {
                                 
                                 // BLE FRAGMENTATION LOGIC
@@ -323,6 +332,13 @@ void send_task(void *pvParameters)
 static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
 {
     switch (event) {
+    case ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT:
+        ble_conn_int = param->update_conn_params.conn_int;
+        display_set_ble_info(spp_mtu_size, ble_conn_int);
+        ESP_LOGW(BLE_TAG, "Connection params: status %d, interval %d (x1.25 ms), latency %d, timeout %d",
+                 param->update_conn_params.status, param->update_conn_params.conn_int,
+                 param->update_conn_params.latency, param->update_conn_params.timeout);
+        break;
     case ESP_GAP_BLE_ADV_DATA_RAW_SET_COMPLETE_EVT:
         ESP_ERROR_CHECK(esp_ble_gap_start_advertising(&spp_adv_params));
         break;
@@ -365,6 +381,8 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         }
         case ESP_GATTS_MTU_EVT:
             spp_mtu_size = p_data->mtu.mtu;
+            ESP_LOGW(BLE_TAG, "Negotiated MTU: %d", spp_mtu_size);
+            display_set_ble_info(spp_mtu_size, ble_conn_int);
             break;
         case ESP_GATTS_CONNECT_EVT:
             spp_conn_id = p_data->connect.conn_id;
@@ -378,6 +396,17 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
             rMUTEX(ble_settings_mutex);
             memcpy(&spp_remote_bda, &p_data->connect.remote_bda, sizeof(esp_bd_addr_t));
             xSemaphoreGive(ble_congested);
+
+            // Ask for a fast connection interval (7.5-15 ms) so replies reach the app quickly; the phone decides
+            {
+                esp_ble_conn_update_params_t conn_params = {0};
+                memcpy(conn_params.bda, p_data->connect.remote_bda, sizeof(esp_bd_addr_t));
+                conn_params.min_int = 0x06;
+                conn_params.max_int = 0x0C;
+                conn_params.latency = 0;
+                conn_params.timeout = 400;
+                esp_ble_gap_update_conn_params(&conn_params);
+            }
             break;
         case ESP_GATTS_DISCONNECT_EVT:
             tMUTEX(ble_settings_mutex);
@@ -385,6 +414,8 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
             rMUTEX(ble_settings_mutex);
             disable_notification();
             spp_mtu_size = DEFAULT_MTU_SIZE;
+            ble_conn_int = 0;
+            display_set_ble_info(0, 0);
             spp_conn_id = 0xffff;
             if(ble_allow_connection())
                 ESP_ERROR_CHECK(esp_ble_gap_start_advertising(&spp_adv_params));
