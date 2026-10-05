@@ -31,6 +31,7 @@
 #include "esp_app_desc.h"
 #include "esp_ota_ops.h"
 #include "esp_flash.h"
+#include "esp_heap_caps.h"
 
 SemaphoreHandle_t sync_task_sem = NULL;
 
@@ -160,9 +161,17 @@ void app_main(void)
     // Main system heartbeat loop. A freshly updated image is only kept once it has run for 20 s;
     // if it crashes before that, the bootloader rolls back to the previous image.
     int uptime_ticks = 0;
+    int heap_ticks = 0;
     bool image_validated = false;
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(500));
+
+        // Heap health, so a slow leak or a tight spot shows up in the flash log (one short line every 30 s)
+        if (++heap_ticks >= 60) {
+            heap_ticks = 0;
+            ESP_LOGI(MAIN_TAG, "Heap: free %lu, lowest ever %lu, largest block %lu bytes", (unsigned long)esp_get_free_heap_size(),
+                     (unsigned long)esp_get_minimum_free_heap_size(), (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+        }
 
         if (!image_validated && ++uptime_ticks >= 40) {
             image_validated = true;
