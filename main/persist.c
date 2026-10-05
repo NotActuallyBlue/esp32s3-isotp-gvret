@@ -161,7 +161,7 @@ static volatile uint32_t persist_enabled_at_ms = 0;
 
 // Per-frame lines are plentiful (one per CAN frame), so the whole boot gets a fixed budget of them. Without
 // the budget a retrying app keeps the window open and the log fills with the same exchange.
-#define PERSIST_LOG_BUDGET  1200
+#define PERSIST_LOG_BUDGET  1500
 static volatile uint32_t persist_log_budget = PERSIST_LOG_BUDGET;
 
 bool persist_log_window(void)
@@ -185,12 +185,18 @@ static uint32_t now_ms(void)
 	return (uint32_t)(esp_timer_get_time() / 1000ULL);
 }
 
-void persist_note_reply(uint16_t link)
+void persist_note_reply(uint16_t link, uint16_t size)
 {
 	if (link >= PERSIST_COUNT || !session_start_ms)
 		return;
-	if (reply_count[link]++ == 0)
-		first_reply_ms[link] = now_ms() - session_start_ms;
+	uint32_t n = ++reply_count[link];
+	uint32_t at = now_ms() - session_start_ms;
+	if (n == 1)
+		first_reply_ms[link] = at;
+	// Always logged for the first few replies of a session, so the order and sizes the app saw are visible
+	// even after the per-frame budget is used up
+	if (n <= 4)
+		ESP_LOGI(PERSIST_TAG, "  reply #%lu from %s: %u bytes at +%lu ms", (unsigned long)n, link == 0 ? "ECU" : "TCU", size, (unsigned long)at);
 }
 
 void persist_note_late_reply(uint16_t link)
