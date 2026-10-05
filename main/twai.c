@@ -144,7 +144,8 @@ void twai_stop_task()
 
 void twai_send_isotp_message(IsoTpLinkContainer* link, twai_message_t* msg)
 {
-    PERSIST_LOG_WINDOW(TWAI_TAG, "CAN RX <- ID: 0x%03lX, DLC: %d, PCI: 0x%02X", (unsigned long)msg->identifier, msg->data_length_code, msg->data[0]);
+    PERSIST_LOG_WINDOW(TWAI_TAG, "CAN RX <- ID: 0x%03lX, DLC: %d, %02X %02X %02X %02X", (unsigned long)msg->identifier, msg->data_length_code,
+                       msg->data[0], msg->data[1], msg->data[2], msg->data[3]);
     tMUTEX(link->data_mutex);
         isotp_on_can_message(&link->link, msg->data, msg->data_length_code);
     rMUTEX(link->data_mutex);

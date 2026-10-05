@@ -46,6 +46,8 @@ int isotp_user_send_can(const uint32_t arbitration_id, const uint8_t* data, cons
     memcpy(frame.data, data, sizeof(frame.data));
 
     g_tx_count++;
+    PERSIST_LOG_WINDOW(BRIDGE_TAG, "CAN TX -> ID: 0x%03lX, DLC: %d, %02X %02X %02X %02X", (unsigned long)arbitration_id, size,
+                       data[0], size > 1 ? data[1] : 0, size > 2 ? data[2] : 0, size > 3 ? data[3] : 0);
     twai_send(&frame);
 
     return ISOTP_RET_OK;                           
@@ -114,9 +116,18 @@ static void isotp_processing_task(void *arg)
         xSemaphoreGive(sync_task_sem);
         while (isotp_allow_run_tasks())
         {
-            if (link_ptr->send_status != ISOTP_SEND_STATUS_INPROGRESS &&
-                link_ptr->receive_status != ISOTP_RECEIVE_STATUS_INPROGRESS) {
+            // Idle: sleep until there is work. Waiting on the ECU/TCU (flow control or consecutive frames):
+            // sleep briefly, every received frame wakes us. Only spin while there are frames left to send.
+            tMUTEX(isotp_link_container->data_mutex);
+                bool send_active = link_ptr->send_status == ISOTP_SEND_STATUS_INPROGRESS;
+                bool receive_active = link_ptr->receive_status == ISOTP_RECEIVE_STATUS_INPROGRESS;
+                bool can_send = send_active && (link_ptr->send_bs_remain == ISOTP_INVALID_BS || link_ptr->send_bs_remain > 0);
+            rMUTEX(isotp_link_container->data_mutex);
+
+            if (!send_active && !receive_active) {
                 xSemaphoreTake(isotp_link_container->wait_for_isotp_data_sem, pdMS_TO_TICKS(TIMEOUT_LONG));
+            } else if (!can_send) {
+                xSemaphoreTake(isotp_link_container->wait_for_isotp_data_sem, pdMS_TO_TICKS(2));
             }
             
             tMUTEX(isotp_link_container->data_mutex);
@@ -184,7 +195,9 @@ static void isotp_send_queue_task(void *arg)
             send_message_t msg;
             if (xQueueReceive(isotp_send_message_queue, &msg, pdMS_TO_TICKS(TIMEOUT_LONG)) == pdTRUE) {
                 if (isotp_allow_run_tasks()) {
-                    PERSIST_LOG_WINDOW(BRIDGE_TAG, "Dispatching command: %d bytes (target: 0x%04X, reply: 0x%04X)", msg.msg_length, msg.rxID, msg.txID);
+                    PERSIST_LOG_WINDOW(BRIDGE_TAG, "Dispatching command: %d bytes (target: 0x%04X, reply: 0x%04X): %02X %02X %02X %02X %02X %02X %02X %02X", msg.msg_length, msg.rxID, msg.txID,
+                                       msg.buffer[0], msg.msg_length > 1 ? msg.buffer[1] : 0, msg.msg_length > 2 ? msg.buffer[2] : 0, msg.msg_length > 3 ? msg.buffer[3] : 0,
+                                       msg.msg_length > 4 ? msg.buffer[4] : 0, msg.msg_length > 5 ? msg.buffer[5] : 0, msg.msg_length > 6 ? msg.buffer[6] : 0, msg.msg_length > 7 ? msg.buffer[7] : 0);
                     bool16 found_container = false;
 
                     // Wait for the addressed link to finish its previous request
@@ -404,6 +417,7 @@ bool16 parse_packet(ble_header_t* header, uint8_t* data)
                             tMUTEX(c->data_mutex);
                                 if (header->rxID == c->link.receive_arbitration_id && header->txID == c->link.send_arbitration_id) {
                                     c->link.stmin_override = *(uint16_t*)data;
+                                    ESP_LOGI(BRIDGE_TAG, "Set stmin override %u us on rx 0x%03lX", c->link.stmin_override, (unsigned long)c->link.receive_arbitration_id);
                                 }
                             rMUTEX(c->data_mutex);
                         }

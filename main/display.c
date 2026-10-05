@@ -5,6 +5,8 @@
 #include "freertos/timers.h"
 #include "freertos/semphr.h"
 #include "esp_timer.h"
+#include "esp_system.h"
+#include "driver/twai.h"
 #include "driver/gpio.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
@@ -148,6 +150,24 @@ static const uint8_t icon_usb_32x32[] = {
 // ---------------------------------------------------------------------------------------------
 #define STRIP_ROWS      16
 static uint16_t strip[LCD_H_RES * STRIP_ROWS];
+static int strip_w, strip_h;
+
+// RGB565 in the byte order the panel expects (same as the COLOR_* constants)
+static uint16_t rgb(uint8_t r, uint8_t g, uint8_t b)
+{
+    uint16_t c = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+    return (c >> 8) | (c << 8);
+}
+
+#define C_VALUE         rgb(235, 238, 245)
+#define C_LABEL         rgb(115, 125, 145)
+#define C_LINE          rgb(40, 48, 64)
+#define C_LINK          rgb(0, 200, 255)
+#define C_BUS           rgb(255, 70, 200)
+#define C_SYSTEM        rgb(255, 180, 0)
+#define C_GOOD          rgb(0, 235, 120)
+#define C_WARN          rgb(255, 170, 0)
+#define C_BAD           rgb(255, 60, 60)
 
 static bool display_on_color_trans_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t *edata, void *ctx)
 {
@@ -183,39 +203,52 @@ void display_clear(uint16_t color)
     display_fill_rect(0, 0, LCD_H_RES, LCD_V_RES, color);
 }
 
-// Draw text centered in a box [x0, x0 + box_w), padding with the background. One transfer per call.
-static void display_draw_text(int x0, int y, int box_w, const char *str, uint16_t color, uint16_t bg, int scale, bool center)
+// Compose a row in the strip, then push it as one transfer
+static void strip_begin(int w, int h, uint16_t bg)
 {
-    if (scale < 1 || 8 * scale > STRIP_ROWS) return;
-    if (x0 < 0) x0 = 0;
-    if (x0 + box_w > LCD_H_RES) box_w = LCD_H_RES - x0;
-    if (box_w <= 0 || y < 0 || y + 8 * scale > LCD_V_RES) return;
+    strip_w = w;
+    strip_h = h;
+    for (int i = 0; i < w * h; i++) strip[i] = bg;
+}
 
-    int len = strlen(str);
-    int max_chars = box_w / (8 * scale);
-    if (len > max_chars) len = max_chars;
-    int text_w = len * 8 * scale;
-    int text_x = center ? (box_w - text_w) / 2 : 0;
-    int rows = 8 * scale;
+static void strip_fill(int x, int y, int w, int h, uint16_t color)
+{
+    for (int py = y; py < y + h && py < strip_h; py++) {
+        if (py < 0) continue;
+        for (int px = x; px < x + w && px < strip_w; px++) {
+            if (px >= 0) strip[py * strip_w + px] = color;
+        }
+    }
+}
 
-    for (int py = 0; py < rows; py++) {
-        uint16_t *line = &strip[py * box_w];
-        for (int px = 0; px < box_w; px++) line[px] = bg;
+static int text_width(const char *str, int scale)
+{
+    return (int)strlen(str) * 8 * scale;
+}
 
-        int glyph_row = py / scale;
-        for (int ci = 0; ci < len; ci++) {
-            char c = str[ci];
-            if (c < 32 || c > 126) c = ' ';
-            uint8_t bits = font8x8_basic[c - 32][glyph_row];
-            int base = text_x + ci * 8 * scale;
+static void strip_text(int x, int y, const char *str, uint16_t color, int scale)
+{
+    for (int ci = 0; str[ci]; ci++) {
+        char c = str[ci];
+        if (c < 32 || c > 126) c = ' ';
+        for (int gy = 0; gy < 8; gy++) {
+            uint8_t bits = font8x8_basic[c - 32][gy];
             for (int b = 0; b < 8; b++) {
                 if (bits & (0x80 >> b)) {
-                    for (int s = 0; s < scale; s++) line[base + b * scale + s] = color;
+                    strip_fill(x + ci * 8 * scale + b * scale, y + gy * scale, scale, scale, color);
                 }
             }
         }
     }
-    display_push(x0, y, box_w, rows);
+}
+
+static void display_draw_text(int x0, int y, int box_w, const char *str, uint16_t color, uint16_t bg, int scale, bool center)
+{
+    if (scale < 1 || 8 * scale > STRIP_ROWS || box_w <= 0 || x0 + box_w > LCD_H_RES) return;
+    strip_begin(box_w, 8 * scale, bg);
+    int tw = text_width(str, scale);
+    strip_text(center ? (box_w - tw) / 2 : 0, 0, str, color, scale);
+    display_push(x0, y, box_w, 8 * scale);
 }
 
 // Draw a 32x32 1-bit icon scaled up, in bands of STRIP_ROWS rows
@@ -261,128 +294,225 @@ static void display_bump_timer(void)
 
 // ---------------------------------------------------------------------------------------------
 // Layout (170 x 320 portrait)
-//   title 12 | icon 38-102 | status pill 110-144 | debug panel 156-212 | divider 222 | RX/TX 236-290
+//   header bar 0-35 | status 42 | rows from 68 (13 px pitch, sections 5 px apart) | RX/TX 262, 286
 // ---------------------------------------------------------------------------------------------
-#define DEBUG_Y         156
-#define DEBUG_LINE_H    12
-#define DEBUG_LINES     5
-#define DIVIDER_Y       222
-#define COUNTERS_Y      236
+#define HEADER_H        36
+#define STATUS_Y        42
+#define TOP_DIVIDER_Y   63
+#define ROWS_Y          68
+#define ROW_PITCH       13
+#define SECTION_GAP     5
+#define BOTTOM_DIVIDER_Y 254
+#define COUNTERS_Y      262
+#define MAX_ROWS        16
 
-static char     info_cache[DEBUG_LINES][24];
-static uint16_t info_color_cache[DEBUG_LINES];
-static char     rx_cache[24];
-static char     tx_cache[24];
+typedef enum { ROW_SECTION, ROW_DATA } row_kind_t;
 
-static bool view_shows_debug(const display_view_t *v)
+typedef struct {
+    row_kind_t  kind;
+    const char *label;
+    char        value[24];
+    uint16_t    color;      // section accent or value color
+} row_t;
+
+static char row_key[MAX_ROWS][64];
+static char rx_key[32];
+static char tx_key[32];
+
+static bool view_shows_simos(const display_view_t *v)
 {
     return strcmp(v->title, "SIMOS") == 0;
+}
+
+static void add_section(row_t *rows, int *n, const char *label, uint16_t accent)
+{
+    rows[*n].kind = ROW_SECTION;
+    rows[*n].label = label;
+    rows[*n].value[0] = 0;
+    rows[*n].color = accent;
+    (*n)++;
+}
+
+static row_t *add_data(row_t *rows, int *n, const char *label)
+{
+    row_t *r = &rows[(*n)++];
+    r->kind = ROW_DATA;
+    r->label = label;
+    r->value[0] = 0;
+    r->color = C_VALUE;
+    return r;
+}
+
+static uint16_t latency_color(uint32_t ms)
+{
+    return ms < 60 ? C_GOOD : (ms < 150 ? C_WARN : C_BAD);
+}
+
+static void format_latency(row_t *r, uint32_t ms)
+{
+    if (ms) {
+        snprintf(r->value, sizeof(r->value), "%lu ms", (unsigned long)(ms > 999 ? 999 : ms));
+        r->color = latency_color(ms);
+    } else {
+        snprintf(r->value, sizeof(r->value), "--");
+        r->color = C_LABEL;
+    }
+}
+
+static void format_can(row_t *r)
+{
+    twai_status_info_t st;
+    if (twai_get_status_info(&st) != ESP_OK) {
+        snprintf(r->value, sizeof(r->value), "--");
+        r->color = C_LABEL;
+        return;
+    }
+
+    const char *state = st.state == TWAI_STATE_RUNNING ? "OK" :
+                        st.state == TWAI_STATE_BUS_OFF ? "BUS OFF" :
+                        st.state == TWAI_STATE_RECOVERING ? "RECOVER" : "STOPPED";
+    snprintf(r->value, sizeof(r->value), "%s T%lu R%lu", state, (unsigned long)st.tx_error_counter, (unsigned long)st.rx_error_counter);
+    if (st.state != TWAI_STATE_RUNNING) r->color = C_BAD;
+    else if (st.tx_error_counter || st.rx_error_counter) r->color = C_WARN;
+    else r->color = C_GOOD;
+}
+
+static int build_rows(const display_view_t *v, row_t *rows, uint32_t notify_rate)
+{
+    int n = 0;
+    row_t *r;
+
+    if (view_shows_simos(v)) {
+        add_section(rows, &n, "LINK", C_LINK);
+        uint16_t mtu = info_mtu, ci = info_conn_int;
+        r = add_data(rows, &n, "MTU");
+        if (mtu) snprintf(r->value, sizeof(r->value), "%u", mtu); else { snprintf(r->value, sizeof(r->value), "no link"); r->color = C_LABEL; }
+        r = add_data(rows, &n, "INTERVAL");
+        if (ci) {
+            uint32_t x100 = (uint32_t)ci * 125;
+            snprintf(r->value, sizeof(r->value), "%lu.%lu ms", (unsigned long)(x100 / 100), (unsigned long)((x100 % 100) / 10));
+            r->color = ci <= 24 ? C_GOOD : C_WARN;
+        } else { snprintf(r->value, sizeof(r->value), "--"); r->color = C_LABEL; }
+        r = add_data(rows, &n, "STREAM");
+        if (info_persist) { snprintf(r->value, sizeof(r->value), "ON  %lu/s", (unsigned long)notify_rate); r->color = C_GOOD; }
+        else { snprintf(r->value, sizeof(r->value), "OFF"); r->color = C_LABEL; }
+    }
+
+    add_section(rows, &n, "BUS", C_BUS);
+    format_can(add_data(rows, &n, "CAN"));
+    if (view_shows_simos(v)) {
+        format_latency(add_data(rows, &n, "ECU"), info_latency_ms[0]);
+        format_latency(add_data(rows, &n, "TCU"), info_latency_ms[1]);
+        r = add_data(rows, &n, "ISO-TP ERR");
+        uint32_t errs = g_error_count;
+        snprintf(r->value, sizeof(r->value), "%lu", (unsigned long)(errs > 9999 ? 9999 : errs));
+        r->color = errs ? C_WARN : C_GOOD;
+    }
+
+    add_section(rows, &n, "SYSTEM", C_SYSTEM);
+    uint32_t secs = (uint32_t)(esp_timer_get_time() / 1000000ULL);
+    r = add_data(rows, &n, "UPTIME");
+    snprintf(r->value, sizeof(r->value), "%02lu:%02lu:%02lu", (unsigned long)(secs / 3600 % 100), (unsigned long)(secs / 60 % 60), (unsigned long)(secs % 60));
+    r = add_data(rows, &n, "HEAP");
+    uint32_t free_kb = esp_get_free_heap_size() / 1024, min_kb = esp_get_minimum_free_heap_size() / 1024;
+    snprintf(r->value, sizeof(r->value), "%lu KB", (unsigned long)free_kb);
+    r->color = min_kb < 20 ? C_WARN : C_VALUE;
+    if (view_shows_simos(v)) {
+        r = add_data(rows, &n, "FLASH LOG");
+        uint32_t boot = flashlog_boot_number();
+        if (boot) {
+            uint8_t pct = flashlog_used_percent();
+            snprintf(r->value, sizeof(r->value), "#%lu  %u%%", (unsigned long)boot, pct);
+            r->color = pct < 70 ? C_GOOD : (pct < 90 ? C_WARN : C_BAD);
+        } else { snprintf(r->value, sizeof(r->value), "off"); r->color = C_LABEL; }
+    }
+    return n;
+}
+
+static void draw_row(const row_t *r, int y)
+{
+    strip_begin(LCD_H_RES, 8, COLOR_BLACK);
+    if (r->kind == ROW_SECTION) {
+        int tw = text_width(r->label, 1);
+        strip_fill(6, 0, 3, 8, r->color);
+        strip_text(14, 0, r->label, r->color, 1);
+        strip_fill(14 + tw + 6, 4, LCD_H_RES - (14 + tw + 6) - 8, 1, C_LINE);
+    } else {
+        strip_text(8, 0, r->label, C_LABEL, 1);
+        strip_text(LCD_H_RES - 8 - text_width(r->value, 1), 0, r->value, r->color, 1);
+    }
+    display_push(0, y, LCD_H_RES, 8);
+}
+
+static void draw_counter(int y, const char *label, unsigned long value, uint16_t color)
+{
+    char num[16];
+    snprintf(num, sizeof(num), "%lu", value);
+    int scale = (text_width(num, 2) + text_width(label, 2) + 24 <= LCD_H_RES) ? 2 : 1;
+
+    strip_begin(LCD_H_RES, 16, COLOR_BLACK);
+    strip_text(8, 0, label, C_LABEL, 2);
+    strip_text(LCD_H_RES - 8 - text_width(num, scale), (16 - 8 * scale) / 2, num, color, scale);
+    display_push(0, y, LCD_H_RES, 16);
 }
 
 static void display_draw_view(const display_view_t *v)
 {
     display_clear(COLOR_BLACK);
 
-    int scale = (strlen(v->title) <= 9) ? 2 : 1;
-    display_draw_text(0, (scale == 2) ? 12 : 16, LCD_H_RES, v->title, COLOR_WHITE, COLOR_BLACK, scale, true);
-
-    int icon_x = (LCD_H_RES - 64) / 2;
+    // Header bar: icon and mode name on the state color
+    display_fill_rect(0, 0, LCD_H_RES, HEADER_H, v->color);
     if (v->icon == ICON_BLUETOOTH || v->icon == ICON_OBD) {
-        display_draw_icon(icon_x, 38, icon_bluetooth_32x32, v->color, COLOR_BLACK, 2);
+        display_draw_icon(4, 2, icon_bluetooth_32x32, COLOR_BLACK, v->color, 1);
     } else if (v->icon == ICON_USB) {
-        display_draw_icon(icon_x, 38, icon_usb_32x32, v->color, COLOR_BLACK, 2);
+        display_draw_icon(4, 2, icon_usb_32x32, COLOR_BLACK, v->color, 1);
     }
+    int title_scale = (text_width(v->title, 2) <= 126) ? 2 : 1;
+    display_draw_text(42, (HEADER_H - 8 * title_scale) / 2, LCD_H_RES - 42 - 4, v->title, COLOR_BLACK, v->color, title_scale, false);
 
-    int pill_w = 140, pill_h = 34, pill_x = (LCD_H_RES - pill_w) / 2, pill_y = 110;
-    display_fill_rect(pill_x, pill_y, pill_w, pill_h, v->color);
-    int status_scale = (strlen(v->status) <= 8) ? 2 : 1;
-    display_draw_text(pill_x, pill_y + (pill_h - 8 * status_scale) / 2, pill_w, v->status, COLOR_BLACK, v->color, status_scale, true);
+    // Status line in the state color
+    int status_scale = (text_width(v->status, 2) <= LCD_H_RES - 8) ? 2 : 1;
+    display_draw_text(0, STATUS_Y + (status_scale == 2 ? 0 : 4), LCD_H_RES, v->status, v->color, COLOR_BLACK, status_scale, true);
 
-    display_fill_rect(10, DIVIDER_Y, LCD_H_RES - 20, 1, COLOR_DARKGREY);
+    display_fill_rect(10, TOP_DIVIDER_Y, LCD_H_RES - 20, 1, C_LINE);
+    display_fill_rect(10, BOTTOM_DIVIDER_Y, LCD_H_RES - 20, 1, C_LINE);
 
-    // Force the info rows to redraw
-    memset(info_cache, 0, sizeof(info_cache));
-    memset(rx_cache, 0, sizeof(rx_cache));
-    memset(tx_cache, 0, sizeof(tx_cache));
+    // Force every row to redraw
+    memset(row_key, 0, sizeof(row_key));
+    memset(rx_key, 0, sizeof(rx_key));
+    memset(tx_key, 0, sizeof(tx_key));
 }
 
-static void display_format_info(int line, char *out, size_t out_size, uint16_t *color, uint32_t notify_rate)
-{
-    *color = COLOR_LIGHTGREY;
-
-    switch (line) {
-    case 0: {
-        uint16_t mtu = info_mtu, ci = info_conn_int;
-        if (mtu == 0 && ci == 0) {
-            snprintf(out, out_size, "BLE  no link");
-        } else {
-            uint32_t x100 = (uint32_t)ci * 125;
-            snprintf(out, out_size, "MTU %u  INT %lu.%lums", mtu, (unsigned long)(x100 / 100), (unsigned long)((x100 % 100) / 10));
-        }
-        break;
-    }
-    case 1:
-        if (info_persist) {
-            snprintf(out, out_size, "STREAM ON  %lu/s", (unsigned long)notify_rate);
-            *color = COLOR_GREEN;
-        } else {
-            snprintf(out, out_size, "STREAM OFF");
-        }
-        break;
-    case 2: {
-        char ecu[12], tcu[12];
-        uint32_t e = info_latency_ms[0], t = info_latency_ms[1];
-        if (e) snprintf(ecu, sizeof(ecu), "%lums", (unsigned long)(e > 999 ? 999 : e)); else snprintf(ecu, sizeof(ecu), "--");
-        if (t) snprintf(tcu, sizeof(tcu), "%lums", (unsigned long)(t > 999 ? 999 : t)); else snprintf(tcu, sizeof(tcu), "--");
-        snprintf(out, out_size, "ECU %s TCU %s", ecu, tcu);
-        break;
-    }
-    case 3: {
-        uint32_t errs = g_error_count;
-        uint32_t secs = (uint32_t)(esp_timer_get_time() / 1000000ULL);
-        snprintf(out, out_size, "ERR %lu  UP %02lu:%02lu:%02lu", (unsigned long)(errs > 9999 ? 9999 : errs),
-                 (unsigned long)(secs / 3600 % 100), (unsigned long)(secs / 60 % 60), (unsigned long)(secs % 60));
-        if (errs) *color = COLOR_ORANGE;
-        break;
-    }
-    default: {
-        uint32_t boot = flashlog_boot_number();
-        if (boot) snprintf(out, out_size, "LOG #%lu  %u%% used", (unsigned long)boot, flashlog_used_percent());
-        else snprintf(out, out_size, "LOG off");
-        break;
-    }
-    }
-}
-
-// Redraw only the rows whose text changed
+// Redraw only the rows whose text or color changed
 static void display_update_info(const display_view_t *v, uint32_t notify_rate)
 {
-    if (view_shows_debug(v)) {
-        for (int i = 0; i < DEBUG_LINES; i++) {
-            char text[24];
-            uint16_t color;
-            display_format_info(i, text, sizeof(text), &color, notify_rate);
-            if (strcmp(text, info_cache[i]) != 0 || color != info_color_cache[i]) {
-                display_draw_text(0, DEBUG_Y + i * DEBUG_LINE_H, LCD_H_RES, text, color, COLOR_BLACK, 1, true);
-                strcpy(info_cache[i], text);
-                info_color_cache[i] = color;
-            }
+    row_t rows[MAX_ROWS];
+    int n = build_rows(v, rows, notify_rate);
+
+    int y = ROWS_Y;
+    for (int i = 0; i < n; i++) {
+        if (rows[i].kind == ROW_SECTION && i > 0) y += SECTION_GAP;
+
+        char key[64];
+        snprintf(key, sizeof(key), "%d|%s|%s|%04X", rows[i].kind, rows[i].label, rows[i].value, rows[i].color);
+        if (strcmp(key, row_key[i]) != 0) {
+            draw_row(&rows[i], y);
+            strlcpy(row_key[i], key, sizeof(row_key[i]));
         }
+        y += ROW_PITCH;
     }
 
-    char rx_str[24], tx_str[24];
-    snprintf(rx_str, sizeof(rx_str), "RX: %lu", (unsigned long)g_rx_count);
-    snprintf(tx_str, sizeof(tx_str), "TX: %lu", (unsigned long)g_tx_count);
-
-    if (strcmp(rx_str, rx_cache) != 0) {
-        int scale = (strlen(rx_str) * 16 <= LCD_H_RES) ? 2 : 1;
-        display_draw_text(0, COUNTERS_Y + (scale == 2 ? 0 : 4), LCD_H_RES, rx_str, COLOR_GREEN, COLOR_BLACK, scale, true);
-        strcpy(rx_cache, rx_str);
+    unsigned long rx = g_rx_count, tx = g_tx_count;
+    char key[32];
+    snprintf(key, sizeof(key), "%lu", rx);
+    if (strcmp(key, rx_key) != 0) {
+        draw_counter(COUNTERS_Y, "RX", rx, COLOR_GREEN);
+        strlcpy(rx_key, key, sizeof(rx_key));
     }
-    if (strcmp(tx_str, tx_cache) != 0) {
-        int scale = (strlen(tx_str) * 16 <= LCD_H_RES) ? 2 : 1;
-        display_draw_text(0, COUNTERS_Y + 30 + (scale == 2 ? 0 : 4), LCD_H_RES, tx_str, COLOR_CYAN, COLOR_BLACK, scale, true);
-        strcpy(tx_cache, tx_str);
+    snprintf(key, sizeof(key), "%lu", tx);
+    if (strcmp(key, tx_key) != 0) {
+        draw_counter(COUNTERS_Y + 24, "TX", tx, COLOR_CYAN);
+        strlcpy(tx_key, key, sizeof(tx_key));
     }
 }
 

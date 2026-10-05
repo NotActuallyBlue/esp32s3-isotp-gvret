@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include "persist.h"
 #include "assert.h"
 #include "isotp.h"
 
@@ -431,7 +432,11 @@ void isotp_on_can_message(IsoTpLink *link, uint8_t *data, uint16_t len) {
                     } else {
 						link->send_bs_remain = message.as.flow_control.BS;
                     }
-					link->send_st_min       = link->stmin_override ? link->stmin_override : stmin_to_us(message.as.flow_control.STmin);
+					/* never send faster than the receiver asks for; the override can only lengthen the gap */
+					uint32_t fc_st_min_us   = stmin_to_us(message.as.flow_control.STmin);
+					link->send_st_min       = (link->stmin_override > fc_st_min_us) ? link->stmin_override : fc_st_min_us;
+					PERSIST_LOG_WINDOW("ISOTP", "Flow control: BS %d, STmin %lu us (override %u) -> using %lu us", message.as.flow_control.BS,
+					                   (unsigned long)fc_st_min_us, link->stmin_override, (unsigned long)link->send_st_min);
                     link->send_timer_st     = isotp_time + link->send_st_min;
                     link->send_wtf_count    = 0;
                 }
