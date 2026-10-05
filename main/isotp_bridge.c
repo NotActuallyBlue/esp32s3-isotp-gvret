@@ -58,6 +58,13 @@ uint64_t isotp_user_get_us(void)
     return esp_timer_get_time();
 }
 
+void isotp_user_flow_control(uint32_t arbitration_id, uint8_t block_size,
+                             uint32_t receiver_st_min_us, uint16_t override_us, uint32_t used_st_min_us)
+{
+    PERSIST_LOG_WINDOW(BRIDGE_TAG, "Flow control for 0x%03lX: BS %d, STmin %lu us (override %u) -> using %lu us",
+                       (unsigned long)arbitration_id, block_size, (unsigned long)receiver_st_min_us, override_us, (unsigned long)used_st_min_us);
+}
+
 void isotp_user_debug(const char* message, ...)
 {
     ESP_LOGD(BRIDGE_TAG, "ISOTP: %s", message);

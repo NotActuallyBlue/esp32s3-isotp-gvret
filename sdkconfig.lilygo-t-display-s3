@@ -979,15 +979,6 @@ CONFIG_PARTITION_TABLE_MD5=y
 # end of Partition Table
 
 #
-# Example Configuration
-#
-# default:
-CONFIG_EXAMPLE_TX_GPIO_NUM=4
-# default:
-CONFIG_EXAMPLE_RX_GPIO_NUM=5
-# end of Example Configuration
-
-#
 # Compiler options
 #
 # default:

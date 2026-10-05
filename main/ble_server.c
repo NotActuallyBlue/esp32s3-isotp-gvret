@@ -339,6 +339,10 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
                  param->update_conn_params.status, param->update_conn_params.conn_int,
                  param->update_conn_params.latency, param->update_conn_params.timeout);
         break;
+    case ESP_GAP_BLE_SET_PKT_LENGTH_COMPLETE_EVT:
+        ESP_LOGW(BLE_TAG, "Data length: status %d, rx %d, tx %d", param->pkt_data_length_cmpl.status,
+                 param->pkt_data_length_cmpl.params.rx_len, param->pkt_data_length_cmpl.params.tx_len);
+        break;
     case ESP_GAP_BLE_ADV_DATA_RAW_SET_COMPLETE_EVT:
         ESP_ERROR_CHECK(esp_ble_gap_start_advertising(&spp_adv_params));
         break;
@@ -407,6 +411,9 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
                 conn_params.timeout = 400;
                 esp_ble_gap_update_conn_params(&conn_params);
             }
+
+            // Allow up to 251 bytes per link-layer packet (data length extension) instead of 27
+            esp_ble_gap_set_pkt_data_len(p_data->connect.remote_bda, 251);
             break;
         case ESP_GATTS_DISCONNECT_EVT:
             tMUTEX(ble_settings_mutex);
