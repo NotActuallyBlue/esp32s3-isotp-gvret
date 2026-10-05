@@ -80,6 +80,29 @@ static void test_uds_dtcs(void)
     TEST_ASSERT_EQUAL_INT(0, obd_parse_uds_dtcs(truncated, sizeof(truncated), d, 8));
 }
 
+static void test_only_real_faults_are_kept(void)
+{
+    // Real statuses seen from a car: "test not completed" entries must not count as codes
+    TEST_ASSERT_FALSE(obd_status_is_fault(0x10));
+    TEST_ASSERT_FALSE(obd_status_is_fault(0x40));
+    TEST_ASSERT_FALSE(obd_status_is_fault(0x50));
+    TEST_ASSERT_TRUE(obd_status_is_fault(0x08));       // confirmed
+    TEST_ASSERT_TRUE(obd_status_is_fault(0x09));       // active and confirmed
+    TEST_ASSERT_TRUE(obd_status_is_fault(0x04));       // pending
+    TEST_ASSERT_TRUE(obd_status_is_fault(0x28));       // failed since last clear, confirmed
+    TEST_ASSERT_TRUE(obd_status_is_fault(0x89));       // lamp on
+
+    obd_dtc_t d[4] = {
+        { 0x0101, 0x07, 0x09, true }, { 0x003A, 0xFD, 0x40, true }, { 0x0053, 0x8C, 0x50, true }, { 0x0002, 0x35, 0x08, true },
+    };
+    TEST_ASSERT_EQUAL_INT(2, obd_keep_faults(d, 4));
+    TEST_ASSERT_EQUAL_UINT16(0x0101, d[0].code);
+    TEST_ASSERT_EQUAL_UINT16(0x0002, d[1].code);
+
+    obd_dtc_t plain = { 0x0700, 0, 0, false };        // OBD mode 03 entries carry no status and are always kept
+    TEST_ASSERT_EQUAL_INT(1, obd_keep_faults(&plain, 1));
+}
+
 static void test_readiness(void)
 {
     const uint8_t abcd[] = { 0x82, 0x07, 0x65, 0x04 };      // MIL on, 2 DTCs, EVAP incomplete
@@ -362,6 +385,7 @@ int main(void)
     RUN_TEST(test_vag_number);
     RUN_TEST(test_mode_dtcs);
     RUN_TEST(test_uds_dtcs);
+    RUN_TEST(test_only_real_faults_are_kept);
     RUN_TEST(test_readiness);
     RUN_TEST(test_pid_format_and_vin);
     RUN_TEST(test_elm_reset_and_settings);

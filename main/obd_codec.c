@@ -55,6 +55,16 @@ int obd_parse_mode_dtcs(const uint8_t *resp, size_t len, obd_dtc_t *out, int max
     return n;
 }
 
+int obd_keep_faults(obd_dtc_t *list, int count)
+{
+    int n = 0;
+    for (int i = 0; i < count; i++) {
+        if (list[i].has_status && !obd_status_is_fault(list[i].status)) continue;
+        list[n++] = list[i];
+    }
+    return n;
+}
+
 int obd_parse_uds_dtcs(const uint8_t *resp, size_t len, obd_dtc_t *out, int max)
 {
     if (len < 3 || resp[0] != 0x59) return 0;

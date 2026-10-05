@@ -19,8 +19,7 @@
 #define KEY_SHORT_MAX_MS    1000
 #define CONFIRM_HOLD_MS     2000
 #define MAX_MODULES         16
-#define MAX_MODULE_DTCS     16
-#define PAGE_ROWS           14
+#define MAX_MODULE_DTCS     32
 #define SCAN_TIMEOUT_MS     50
 #define LIVE_PID_COUNT      8
 
@@ -180,7 +179,7 @@ static void log_dtcs(const module_t *m)
 // Read trouble codes of one module that answered. Returns false if it did not answer at all.
 static bool read_module(module_t *m)
 {
-    static const uint8_t read_uds[] = { 0x19, 0x02, 0xFF };
+    static const uint8_t read_uds[] = { 0x19, 0x02, DTC_STATUS_FAULT_MASK };
     int n = request(m->tx, read_uds, sizeof(read_uds), SCAN_TIMEOUT_MS);
     if (n <= 0) return false;
 
@@ -189,6 +188,7 @@ static bool read_module(module_t *m)
     if (r->data[0] == 0x59) {
         m->uds = true;
         m->dtc_count = (uint8_t)obd_parse_uds_dtcs(r->data, r->len, m->dtcs, MAX_MODULE_DTCS);
+        m->dtc_count = (uint8_t)obd_keep_faults(m->dtcs, m->dtc_count);      // some modules ignore the mask
         return true;
     }
 
@@ -342,12 +342,54 @@ static void entry_at(int index, char *label, size_t lsize, char *value, size_t v
     label[0] = 0;
 }
 
+// The list is paged by pixels, not by a fixed row count: module headers take extra spacing, and a page must never run
+// off the bottom of the 320 px screen.
+#define LIST_FIRST_Y    81      // below the section title
+#define LIST_LAST_Y     312     // the footer row has to end before this
+#define ROW_H           13
+#define HEADER_H        18      // a section row plus its gap
+
+static int entry_height(int index)
+{
+    char label[16], value[24];
+    uint16_t color;
+    entry_at(index, label, sizeof(label), value, sizeof(value), &color);
+    return label[0] == '#' ? HEADER_H : ROW_H;
+}
+
+// How many entries fit on the page that starts at 'first'
+static int page_size(int first, int total)
+{
+    int y = LIST_FIRST_Y, n = 0;
+    while (first + n < total) {
+        int h = entry_height(first + n);
+        if (n > 0 && y + h + ROW_H > LIST_LAST_Y) break;
+        y += h;
+        n++;
+    }
+    return n;
+}
+
+static int page_start(int target, int total, int *pages)
+{
+    int first = 0, p = 0, start = 0;
+    while (first < total) {
+        if (p == target) start = first;
+        first += page_size(first, total);
+        p++;
+    }
+    if (pages) *pages = p ? p : 1;
+    return target < p ? start : 0;
+}
+
 static void show_results(void)
 {
     int total = entry_total();
-    int pages = (total + PAGE_ROWS - 1) / PAGE_ROWS;
-    if (pages < 1) pages = 1;
+    int pages;
+    page_start(0, total, &pages);
     if (page >= pages) page = 0;
+    int first = page_start(page, total, NULL);
+    int count = page_size(first, total);
 
     rows_reset();
     if (module_count == 0) {
@@ -357,10 +399,10 @@ static void show_results(void)
         row("CHECK", "OBD cable", COLOR_YELLOW);
         row("CAN", "500 kbit/s", COLOR_WHITE);
     }
-    for (int i = 0; i < PAGE_ROWS && page * PAGE_ROWS + i < total; i++) {
+    for (int i = 0; i < count && row_count < 15; i++) {
         char label[16], value[24];
         uint16_t color;
-        entry_at(page * PAGE_ROWS + i, label, sizeof(label), value, sizeof(value), &color);
+        entry_at(first + i, label, sizeof(label), value, sizeof(value), &color);
         row(label, value, color);
     }
     if (pages > 1 || module_count) {
@@ -582,9 +624,21 @@ static void selftest(void)
     vTaskDelay(pdMS_TO_TICKS(2000));
     ESP_LOGW(DIAG_TAG, "SELFTEST scan");
     scan();
+    {
+        int total = entry_total(), pages;
+        page_start(0, total, &pages);
+        ESP_LOGW(DIAG_TAG, "SELFTEST results: %d entries, %d code(s), %d page(s)", total, total_codes(), pages);
+        for (int p = 0; p < pages; p++) {
+            page = p;
+            show_results();
+            int y = LIST_FIRST_Y - ROW_H;
+            for (int i = 1; i < row_count; i++) y += (rows[i].label[0] == '#' ? HEADER_H : ROW_H);
+            ESP_LOGW(DIAG_TAG, "SELFTEST page %d/%d: %d rows, list ends at y=%d (limit %d)", p + 1, pages, row_count, y + ROW_H, LIST_LAST_Y);
+            vTaskDelay(pdMS_TO_TICKS(700));
+        }
+    }
     page = 0;
     show_results();
-    vTaskDelay(pdMS_TO_TICKS(500));
 
     ESP_LOGW(DIAG_TAG, "SELFTEST info");
     vehicle_info();

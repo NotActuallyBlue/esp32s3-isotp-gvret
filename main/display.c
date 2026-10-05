@@ -693,7 +693,8 @@ static void display_draw_view(const display_view_t *v)
     }
 }
 
-// Redraw only the rows whose text or color changed
+// Redraw only the rows whose text or color changed. If the rows moved (a page with a different number of section
+// headers has different spacing), the whole row area is wiped and redrawn so no old line is left behind.
 static void display_update_info(const display_view_t *v, uint32_t notify_rate)
 {
     if (v->prompt) return;
@@ -701,17 +702,32 @@ static void display_update_info(const display_view_t *v, uint32_t notify_rate)
     row_t rows[MAX_ROWS];
     int n = build_rows(v, rows, notify_rate);
 
+    static int prev_y[MAX_ROWS];
+    static int prev_n = -1;
+    int ys[MAX_ROWS];
     int y = ROWS_Y;
+    bool moved = n != prev_n;
     for (int i = 0; i < n; i++) {
         if (rows[i].kind == ROW_SECTION && i > 0) y += SECTION_GAP;
+        ys[i] = y;
+        if (i >= prev_n || ys[i] != prev_y[i]) moved = true;
+        y += ROW_PITCH;
+    }
+    if (moved) {
+        int bottom = display_shows_counters(v) ? BOTTOM_DIVIDER_Y : LCD_V_RES - 4;
+        display_fill_rect(0, ROWS_Y, LCD_H_RES, bottom - ROWS_Y, COLOR_BLACK);
+        memset(row_key, 0, sizeof(row_key));
+        memcpy(prev_y, ys, sizeof(int) * n);
+        prev_n = n;
+    }
 
+    for (int i = 0; i < n; i++) {
         char key[64];
         snprintf(key, sizeof(key), "%d|%s|%s|%04X", rows[i].kind, rows[i].label, rows[i].value, rows[i].color);
         if (strcmp(key, row_key[i]) != 0) {
-            draw_row(&rows[i], y);
+            draw_row(&rows[i], ys[i]);
             strlcpy(row_key[i], key, sizeof(row_key[i]));
         }
-        y += ROW_PITCH;
     }
 
     if (!display_shows_counters(v)) return;

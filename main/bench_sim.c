@@ -12,7 +12,7 @@
 
 #define SIM_TAG             "BenchSim"
 #define SIM_NODE_COUNT      4
-#define SIM_MAX_DTCS        4
+#define SIM_MAX_DTCS        24
 #define SIM_FUNCTIONAL_ID   0x7DF
 #define SIM_BUF_SIZE        1024
 #define SIM_QUEUE_LEN       64
@@ -72,13 +72,20 @@ static void sim_reset_dtcs(void)
     sim_nodes[0].dtcs[0] = (sim_dtc_t){ 0x0300, 0x00, 0x89 };     // P0300 active, confirmed, lamp on
     sim_nodes[0].dtcs[1] = (sim_dtc_t){ 0x0171, 0x00, 0x08 };     // P0171 stored
     sim_nodes[0].dtcs[2] = (sim_dtc_t){ 0x0420, 0x00, 0x04 };     // P0420 pending only
-    sim_nodes[0].dtc_count = 3;
+    sim_nodes[0].dtcs[3] = (sim_dtc_t){ 0x003A, 0xFD, 0x40 };     // "test not completed": listed by real modules, not a fault
+    sim_nodes[0].dtcs[4] = (sim_dtc_t){ 0x0053, 0x8C, 0x50 };
+    sim_nodes[0].dtc_count = 5;
     sim_nodes[1].dtcs[0] = (sim_dtc_t){ 0x0700, 0x00, 0x08 };     // P0700 stored
     sim_nodes[1].dtc_count = 1;
     sim_nodes[2].dtcs[0] = (sim_dtc_t){ 0xC100, 0x00, 0x28 };     // U0100 stored
     sim_nodes[2].dtc_count = 1;
     sim_nodes[3].dtcs[0] = (sim_dtc_t){ 0x4035, 0x00, 0x09 };     // C0035 active
     sim_nodes[3].dtc_count = 1;
+    // Enough codes to need several pages on the screen
+    for (int i = 0; i < 15; i++) {
+        sim_nodes[3].dtcs[1 + i] = (sim_dtc_t){ (uint16_t)(0x4040 + i), 0x00, 0x08 };
+    }
+    sim_nodes[3].dtc_count = 16;
 }
 
 void bench_sim_set_sink(bench_sim_sink_t sink)

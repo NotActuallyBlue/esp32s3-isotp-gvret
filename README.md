@@ -24,8 +24,10 @@ Honest summary of what has been checked and how.
 | Simos BLE with Simos.app (ECU and TCU, HSL and mode 22) | Works in the car |
 | Simos BLE with Simos Tools, ECU HSL | Works in the car |
 | Simos Tools with the TCU enabled | Shows "Failed to create PID frame" in the car (see [Known issues](#known-issues)) |
-| Diag, ELM327, sleep, Wi-Fi update | Tested on the bench, against the simulator and desktop test tools. Screens and buttons checked by hand on the bench |
-| Diag and ELM327 against a real car, and with real phone apps | Not yet verified |
+| Diag scan, live data and vehicle info in the car | VIN, live data and stored codes read correctly on a real car (found and fixed on that run: "test not completed" entries were counted as codes, and the code list could overlap when paging) |
+| Diag clear codes | Not yet tried on a real car |
+| ELM327, sleep, Wi-Fi update | Tested on the bench, against the simulator and desktop test tools. Screens and buttons checked by hand on the bench |
+| ELM327 against a real car, and with real phone apps | Not yet verified |
 | Wake from deep sleep by the BOOT button or the CAN bus | Not yet verified (a timer wake is) |
 
 ## Hardware
@@ -91,8 +93,11 @@ interval and a 251-byte data length.
 Two buttons: **BOOT** (tap = next) and **KEY** (tap = select / back).
 
 * **Scan codes** asks the OBD addresses 0x7E0-0x7E7 and the VAG range 0x700-0x76F (answers on request + 0x6A),
-  about 6 s. Modules that speak UDS are read with service 0x19, OBD-only modules fall back to modes 03 and 07.
-  Codes are listed per module with their status (ACT / PEND / STORED / MIL).
+  about 6 s. Modules that speak UDS are read with service 0x19 and status mask 0xAF, so only real faults come back
+  (failed, pending, confirmed, failed since last clear, lamp requested). VAG modules also list every code they
+  monitor with the "test not completed" bits set, and those are not shown. OBD-only modules fall back to modes 03 and
+  07. Codes are listed per module with their status (ACT / PEND / STORED / MIL) and paged to fit the screen. Outside the
+  engine and transmission, a module's three-byte code can be a VAG-specific number rather than a standard SAE code.
 * **Clear codes** needs you to **hold KEY for 2 s**. It sends UDS 0x14 (or mode 04 to OBD-only modules) to every
   module that answered, then reads them back and shows what is really stored now. Clearing also resets readiness
   monitors and erases freeze frames, and needs ignition on.
