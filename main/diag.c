@@ -12,6 +12,7 @@
 #include "diag_can.h"
 #include "obd_codec.h"
 #include "power_mgr.h"
+#include "canstats.h"
 #include "diag.h"
 
 #define DIAG_TAG            "Diag"
@@ -45,6 +46,7 @@ static int              module_count;
 static bool             scanned;
 static diag_response_t  resp[DIAG_MAX_RESPONSES];
 static bool             bench;
+static uint32_t         scan_frames;            // frames seen on the bus during the last scan
 
 static ui_state_t       ui = UI_MENU;
 static int              menu_cursor;
@@ -217,6 +219,19 @@ static bool read_module(module_t *m)
     return true;
 }
 
+// What the CAN controller reports: an unacknowledged transmitter (nobody awake on the bus) ends up error passive
+static const char *can_state_text(uint16_t *color)
+{
+    twai_status_info_t st;
+    *color = COLOR_WHITE;
+    if (bench || twai_get_status_info(&st) != ESP_OK) return "simulated";
+    if (st.state == TWAI_STATE_BUS_OFF || st.state == TWAI_STATE_RECOVERING) { *color = COLOR_RED; return "BUS OFF"; }
+    if (st.tx_error_counter >= 128 || st.rx_error_counter >= 128) { *color = COLOR_ORANGE; return "ERROR PASSIVE"; }
+    if (st.tx_error_counter || st.rx_error_counter) { *color = COLOR_YELLOW; return "some errors"; }
+    *color = COLOR_GREEN;
+    return "OK";
+}
+
 static int total_codes(void)
 {
     int total = 0;
@@ -257,6 +272,8 @@ static void scan(void)
     for (uint32_t id = 0x7E0; id <= 0x7E7; id++) candidates[total++] = id;
     for (uint32_t id = 0x700; id < 0x770; id++) candidates[total++] = id;
 
+    canstats_totals_t before;
+    canstats_get_totals(&before);
     int64_t started = esp_timer_get_time();
     for (int i = 0; i < total; i++) {
         poll_key();
@@ -288,6 +305,12 @@ static void scan(void)
         log_dtcs(m);
         module_count++;
     }
+
+    canstats_totals_t after;
+    canstats_get_totals(&after);
+    scan_frames = after.frames - before.frames;
+    uint16_t state_color;
+    ESP_LOGI(DIAG_TAG, "Bus during the scan: %lu frame(s) received, CAN controller %s", (unsigned long)scan_frames, can_state_text(&state_color));
 
     scanned = true;
     ESP_LOGI(DIAG_TAG, "Scan finished in %lld ms: %d module(s), %d code(s)", (long long)((esp_timer_get_time() - started) / 1000),
@@ -393,11 +416,22 @@ static void show_results(void)
 
     rows_reset();
     if (module_count == 0) {
+        uint16_t state_color;
+        const char *state = can_state_text(&state_color);
+        bool asleep = !bench && scan_frames < 5;            // a live bus sends frames of its own; our requests are not echoed back
         row("NO MODULE", "answered", COLOR_RED);
+        row("BUS", asleep ? "SILENT" : "traffic seen", asleep ? COLOR_ORANGE : COLOR_GREEN);
+        row("CAN", state, state_color);
         row("", "", 0);
-        row("CHECK", "ignition on", COLOR_YELLOW);
-        row("CHECK", "OBD cable", COLOR_YELLOW);
-        row("CAN", "500 kbit/s", COLOR_WHITE);
+        if (asleep) {
+            row("BUS ASLEEP?", "", COLOR_YELLOW);
+            row("TURN", "ignition on", COLOR_WHITE);
+            row("OR", "start engine", COLOR_WHITE);
+        } else {
+            row("BUS IS ALIVE", "", COLOR_YELLOW);
+            row("CHECK", "OBD cable", COLOR_WHITE);
+            row("CAN", "500 kbit/s", COLOR_WHITE);
+        }
     }
     for (int i = 0; i < count && row_count < 15; i++) {
         char label[16], value[24];

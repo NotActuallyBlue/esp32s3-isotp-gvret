@@ -104,6 +104,11 @@ Two buttons: **BOOT** (tap = next) and **KEY** (tap = select / back).
 * **Live data** shows engine speed, speed, coolant, load, throttle, intake temperature, MAP and module voltage.
 * **Vehicle info** shows the VIN, MIL state and readiness monitors.
 
+If nothing answers, the screen says why: **BUS SILENT** means no frames at all were seen, so the car's network is
+asleep (some cars need the engine running, not just ignition on, before the OBD port wakes up); **BUS IS ALIVE** means
+traffic was seen but no module replied. The CAN controller state (`OK`, `ERROR PASSIVE`, `BUS OFF`) is shown too, and
+both are written to the flash log.
+
 The scan is read-only. Every module, code and clear result is written to the flash log, including each code's
 five-digit VAG fault number (P0300 = 16684).
 
