@@ -57,9 +57,31 @@ static esp_err_t index_handler(httpd_req_t *req)
     return httpd_resp_send(req, upload_page, HTTPD_RESP_USE_STRLEN);
 }
 
-static esp_err_t fail(httpd_req_t *req, const char *status, const char *message)
+#define OTA_MAX_DRAIN       (4 * 1024 * 1024)
+
+// Read and discard what is left of the upload. If the reply goes out while the client is still sending, the
+// client sees a reset connection instead of the reason, so the body is consumed first (up to a limit).
+static void drain_request(httpd_req_t *req, size_t consumed)
+{
+    char scratch[256];
+    size_t limit = req->content_len < OTA_MAX_DRAIN ? req->content_len : OTA_MAX_DRAIN;
+    int timeouts = 0;
+    while (consumed < limit) {
+        size_t want = limit - consumed < sizeof(scratch) ? limit - consumed : sizeof(scratch);
+        int got = httpd_req_recv(req, scratch, want);
+        if (got == HTTPD_SOCK_ERR_TIMEOUT) {
+            if (++timeouts > 3) break;
+            continue;
+        }
+        if (got <= 0) break;
+        consumed += got;
+    }
+}
+
+static esp_err_t fail(httpd_req_t *req, const char *status, const char *message, size_t consumed)
 {
     ESP_LOGE(OTA_TAG, "Update rejected: %s", message);
+    drain_request(req, consumed);
     display_set_status("UPDATE", "FAILED", COLOR_RED);
     display_set_detail(3, "ERROR", message);
     httpd_resp_set_status(req, status);
@@ -71,12 +93,12 @@ static esp_err_t update_handler(httpd_req_t *req)
 {
     const esp_partition_t *target = esp_ota_get_next_update_partition(NULL);
     if (!target) {
-        return fail(req, "500 Internal Server Error", "no update partition");
+        return fail(req, "500 Internal Server Error", "no update partition", 0);
     }
 
     size_t total = req->content_len;
     if (total < 512 || total > target->size) {
-        return fail(req, "400 Bad Request", "file size is not valid for this dongle");
+        return fail(req, "400 Bad Request", "file size is not valid for this dongle", 0);
     }
 
     static char buf[OTA_CHUNK_SIZE];
@@ -96,7 +118,7 @@ static esp_err_t update_handler(httpd_req_t *req)
         }
         if (got <= 0) {
             if (started) esp_ota_abort(handle);
-            return fail(req, "500 Internal Server Error", "connection lost during upload");
+            return fail(req, "500 Internal Server Error", "connection lost during upload", total);
         }
 
         if (!started) {
@@ -104,22 +126,22 @@ static esp_err_t update_handler(httpd_req_t *req)
             // this project's firmware before a single byte is written.
             const size_t desc_offset = sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t);
             if ((size_t)got < desc_offset + sizeof(esp_app_desc_t)) {
-                return fail(req, "400 Bad Request", "not a firmware image");
+                return fail(req, "400 Bad Request", "not a firmware image", received + got);
             }
             const esp_app_desc_t *desc = (const esp_app_desc_t *)(buf + desc_offset);
             if (desc->magic_word != ESP_APP_DESC_MAGIC_WORD ||
                 strncmp(desc->project_name, esp_app_get_description()->project_name, sizeof(desc->project_name)) != 0) {
-                return fail(req, "400 Bad Request", "this is not ISOTP-BLE firmware");
+                return fail(req, "400 Bad Request", "this is not ISOTP-BLE firmware", received + got);
             }
             if (esp_ota_begin(target, OTA_WITH_SEQUENTIAL_WRITES, &handle) != ESP_OK) {   // erase as we write, not all at once
-                return fail(req, "500 Internal Server Error", "could not start the update");
+                return fail(req, "500 Internal Server Error", "could not start the update", received + got);
             }
             started = true;
         }
 
         if (esp_ota_write(handle, buf, got) != ESP_OK) {
             esp_ota_abort(handle);
-            return fail(req, "500 Internal Server Error", "flash write failed");
+            return fail(req, "500 Internal Server Error", "flash write failed", received + got);
         }
         received += got;
 
@@ -133,10 +155,10 @@ static esp_err_t update_handler(httpd_req_t *req)
     }
 
     if (esp_ota_end(handle) != ESP_OK) {
-        return fail(req, "400 Bad Request", "image check failed, the file is damaged");
+        return fail(req, "400 Bad Request", "image check failed, the file is damaged", total);
     }
     if (esp_ota_set_boot_partition(target) != ESP_OK) {
-        return fail(req, "500 Internal Server Error", "could not select the new image");
+        return fail(req, "500 Internal Server Error", "could not select the new image", total);
     }
 
     ESP_LOGI(OTA_TAG, "Update written to %s, restarting", target->label);
@@ -201,5 +223,8 @@ void ota_update_start(void)
     display_set_detail(2, "OPEN", "192.168.4.1");
     display_set_status("UPDATE", "READY", COLOR_CYAN);
 
+#ifdef FORCE_WIFI_UPDATE
+    ESP_LOGW(OTA_TAG, "TEST BUILD: Wi-Fi password is %s", ap_password);     // normal builds only show it on the screen
+#endif
     ESP_LOGW(OTA_TAG, "Update mode: join Wi-Fi '%s' (password shown on the dongle) and open http://192.168.4.1", ap_ssid);
 }

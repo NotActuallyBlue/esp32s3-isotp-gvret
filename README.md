@@ -42,7 +42,18 @@ The car session is the one before the boot you just caused by plugging in.
 
 ## Tests
 
-The ISO-TP engine is plain C with host-side tests: `pio test -e native`.
+* The ISO-TP engine is plain C with host-side tests: `pio test -e native`.
+* End-to-end over BLE from a desktop (needs `pip install bleak` and a Bluetooth adapter):
+  `python3 tools/ble_probe.py all` speaks the dongle's protocol like Simos Tools does (handshake, settings,
+  single/multi-frame and 69-byte requests, split packets, persist streaming, and the "create PID" timing
+  probe). Put the dongle in bench mode first (hold BOOT 5-8 s). The simulated TCU asks for a 10 ms gap between
+  consecutive frames and drops a request that arrives faster, so it catches a regression in frame spacing.
+* Test builds that boot straight into a one-shot mode (never use these in a car):
+  `PLATFORMIO_BUILD_FLAGS=-DFORCE_BENCH_SIM pio run -t upload` or `-DFORCE_WIFI_UPDATE`. The Wi-Fi one also
+  prints its password to the serial log. Flash the normal build afterwards.
+
+Note: an update is only kept after the new image has run for 20 s. Resetting or unplugging the dongle sooner
+rolls back to the previous firmware, which is what the bootloader is meant to do with an image that may be bad.
 
 ## Layout
 

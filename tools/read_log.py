@@ -59,8 +59,8 @@ def esptool_cmd():
     return [sys.executable, "-m", "esptool"]
 
 
-def dump_flash(port, out_path, offset, size):
-    cmd = esptool_cmd() + ["--chip", "esp32s3"]
+def dump_flash(port, out_path, offset, size, baud=921600):
+    cmd = esptool_cmd() + ["--chip", "esp32s3", "--baud", str(baud)]
     if port:
         cmd += ["--port", port]
     cmd += ["read_flash", hex(offset), hex(size), out_path]

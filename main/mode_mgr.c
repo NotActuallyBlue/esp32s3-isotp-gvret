@@ -174,6 +174,13 @@ void mode_mgr_init(void)
     }
     oneshot_magic = 0;
 
+#ifdef FORCE_BENCH_SIM
+    current_mode = OP_MODE_BENCH_SIM;      // test builds only: PLATFORMIO_BUILD_FLAGS=-DFORCE_BENCH_SIM pio run -t upload
+#endif
+#ifdef FORCE_WIFI_UPDATE
+    current_mode = OP_MODE_WIFI_UPDATE;    // test builds only, see FORCE_BENCH_SIM
+#endif
+
     ESP_LOGI(TAG, "Active mode: %s (%d), saved mode: %s", get_mode_name(current_mode), current_mode, get_mode_name(saved_mode));
 
     // Launch the runtime button listener task

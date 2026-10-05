@@ -33,13 +33,18 @@ typedef struct {
     uint16_t    response_len;
     int64_t     respond_at_us;
     bool        response_pending;
+    uint32_t    st_min_us;              // gap this module asks for in its flow control, and insists on
+    int64_t     last_cf_us;             // when the previous consecutive frame of the current request arrived
+    bool        request_dropped;        // the dongle sent frames faster than st_min_us: ignore this request
 } sim_node_t;
 
 static bool             sim_active = false;
 static QueueHandle_t    sim_queue = NULL;
 static sim_node_t       sim_nodes[SIM_NODE_COUNT] = {
-    { .name = "ECU", .request_id = 0x7E0, .response_id = 0x7E8 },
-    { .name = "TCU", .request_id = 0x7E1, .response_id = 0x7E9 },
+    { .name = "ECU", .request_id = 0x7E0, .response_id = 0x7E8, .st_min_us = 0 },
+    // A DSG-like module: asks for 10 ms between consecutive frames and silently drops a request whose frames
+    // come faster. This reproduces the "flow control, then silence" behaviour seen on the real TCU.
+    { .name = "TCU", .request_id = 0x7E1, .response_id = 0x7E9, .st_min_us = 10000 },
 };
 
 bool bench_sim_active(void)
@@ -144,9 +149,27 @@ static void sim_route_frame(const sim_frame_t *frame)
     // A frame the dongle sent to a simulated module
     for (int i = 0; i < SIM_NODE_COUNT; i++) {
         if (frame->id == sim_nodes[i].request_id) {
+            sim_node_t *node = &sim_nodes[i];
+            uint8_t pci = frame->data[0] & 0xF0;
+
+            if (pci == 0x10) {                              // first frame: a new request starts
+                node->request_dropped = false;
+                node->last_cf_us = 0;
+            } else if (pci == 0x20 && node->st_min_us) {    // consecutive frame: check the separation time
+                int64_t now = esp_timer_get_time();
+                if (node->last_cf_us && (now - node->last_cf_us) < (int64_t)node->st_min_us * 8 / 10 && !node->request_dropped) {
+                    ESP_LOGW(SIM_TAG, "%s: consecutive frame after %lld us, asked for %lu us: request dropped",
+                             node->name, (long long)(now - node->last_cf_us), (unsigned long)node->st_min_us);
+                    node->request_dropped = true;
+                    node->link.receive_status = ISOTP_RECEIVE_STATUS_IDLE;
+                }
+                node->last_cf_us = now;
+            }
+            if (node->request_dropped && pci == 0x20) return;
+
             uint8_t data[8];
             memcpy(data, frame->data, frame->len);
-            isotp_on_can_message(&sim_nodes[i].link, data, frame->len);
+            isotp_on_can_message(&node->link, data, frame->len);
             return;
         }
     }
@@ -207,6 +230,7 @@ void bench_sim_start(void)
         sim_node_t *node = &sim_nodes[i];
         isotp_init_link(&node->link, node->response_id, node->request_id,
                         node->send_buf, sizeof(node->send_buf), node->recv_buf, sizeof(node->recv_buf));
+        node->link.st_min = node->st_min_us;                // advertised in our flow control frames
     }
     sim_active = true;
     xTaskCreate(sim_task, "bench_sim", 4096, NULL, 3, NULL);
