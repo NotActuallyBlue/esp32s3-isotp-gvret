@@ -323,7 +323,7 @@ void isotp_stop_task(void)
             xSemaphoreTake(c->task_mutex, portMAX_DELAY);
             xSemaphoreGive(c->task_mutex);
         }
-        send_message_t msg;
+        send_message_t msg = { 0 };     // wakes the send task so it can see that it should stop
         xQueueSend(isotp_send_message_queue, &msg, portMAX_DELAY);
         xSemaphoreTake(isotp_send_task_mutex, portMAX_DELAY);
         xSemaphoreGive(isotp_send_task_mutex);

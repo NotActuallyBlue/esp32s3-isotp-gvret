@@ -30,15 +30,6 @@
 
 SemaphoreHandle_t sync_task_sem = NULL;
 
-// Override POSIX getentropy to prevent libesp_libc TLS errno linker conflict
-int getentropy(void *buffer, size_t length) {
-    if (length > 256) {
-        return -1;
-    }
-    esp_fill_random(buffer, length);
-    return 0;
-}
-
 #define MAIN_TAG    "Main"
 
 static void app_ble_connected(void) {

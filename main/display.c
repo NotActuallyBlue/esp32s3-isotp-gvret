@@ -958,5 +958,5 @@ void display_init(void)
     if (display_timer) xTimerStart(display_timer, 0);
 
     // The task draws the initial view (view_dirty is already set)
-    xTaskCreate(display_task, "Display", 3072, NULL, tskIDLE_PRIORITY + 1, &display_task_handle);
+    xTaskCreate(display_task, "Display", 6144, NULL, tskIDLE_PRIORITY + 1, &display_task_handle);
 }

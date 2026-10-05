@@ -111,7 +111,7 @@ static esp_err_t update_handler(httpd_req_t *req)
                 strncmp(desc->project_name, esp_app_get_description()->project_name, sizeof(desc->project_name)) != 0) {
                 return fail(req, "400 Bad Request", "this is not ISOTP-BLE firmware");
             }
-            if (esp_ota_begin(target, total, &handle) != ESP_OK) {
+            if (esp_ota_begin(target, OTA_WITH_SEQUENTIAL_WRITES, &handle) != ESP_OK) {   // erase as we write, not all at once
                 return fail(req, "500 Internal Server Error", "could not start the update");
             }
             started = true;

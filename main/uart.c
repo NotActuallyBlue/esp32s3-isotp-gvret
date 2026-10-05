@@ -71,7 +71,7 @@ void uart_deinit()
 
 	if (uart_send_queue) {
 		//clear and delete queue
-		send_message_t msg;
+		send_message_t msg = { 0 };
 		while (xQueueReceive(uart_send_queue, &msg, 0) == pdTRUE)
 			if (msg.buffer)
 				free(msg.buffer);
@@ -123,7 +123,7 @@ void uart_stop_task()
 	if (uart_run_task) {
 		uart_run_task = false;
 
-		send_message_t msg;
+		send_message_t msg = { 0 };
 		xQueueSend(uart_receive_queue, &msg, portMAX_DELAY);
 		xSemaphoreTake(uart_receive_task_mutex, portMAX_DELAY);
 		xSemaphoreGive(uart_receive_task_mutex);
@@ -138,7 +138,7 @@ void uart_stop_task()
 
 void uart_send(uint32_t txID, uint32_t rxID, uint8_t flags, const void* src, size_t size)
 {
-	send_message_t msg;
+	send_message_t msg = { 0 };
 	msg.msg_length = size + sizeof(ble_header_t);
 	msg.buffer = malloc(msg.msg_length);
 	if (msg.buffer) {
