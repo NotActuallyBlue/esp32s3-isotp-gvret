@@ -1,4 +1,5 @@
 #include <string.h>
+#include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -10,7 +11,9 @@
 #include "bench_sim.h"
 
 #define SIM_TAG             "BenchSim"
-#define SIM_NODE_COUNT      2
+#define SIM_NODE_COUNT      4
+#define SIM_MAX_DTCS        4
+#define SIM_FUNCTIONAL_ID   0x7DF
 #define SIM_BUF_SIZE        1024
 #define SIM_QUEUE_LEN       64
 #define SIM_LATENCY_US      4000        // time a real module would take to produce a response
@@ -20,6 +23,12 @@ typedef struct {
     uint8_t     len;
     uint8_t     data[8];
 } sim_frame_t;
+
+typedef struct {
+    uint16_t    code;                   // two-byte SAE code
+    uint8_t     fault_type;
+    uint8_t     status;                 // UDS status byte
+} sim_dtc_t;
 
 typedef struct {
     const char *name;
@@ -36,16 +45,46 @@ typedef struct {
     uint32_t    st_min_us;              // gap this module asks for in its flow control, and insists on
     int64_t     last_cf_us;             // when the previous consecutive frame of the current request arrived
     bool        request_dropped;        // the dongle sent frames faster than st_min_us: ignore this request
+    bool        obd;                    // answers the functional OBD-II address 0x7DF as well
+    bool        no_uds_dtc;             // refuses UDS 0x19 (an OBD-only module): codes come from modes 03/07
+    sim_dtc_t   dtcs[SIM_MAX_DTCS];
+    uint8_t     dtc_count;
 } sim_node_t;
+
+static bench_sim_sink_t sim_sink = NULL;
 
 static bool             sim_active = false;
 static QueueHandle_t    sim_queue = NULL;
 static sim_node_t       sim_nodes[SIM_NODE_COUNT] = {
-    { .name = "ECU", .request_id = 0x7E0, .response_id = 0x7E8, .st_min_us = 0 },
+    { .name = "ECU", .request_id = 0x7E0, .response_id = 0x7E8, .st_min_us = 0, .obd = true },
     // A DSG-like module: asks for 10 ms between consecutive frames and silently drops a request whose frames
     // come faster. This reproduces the "flow control, then silence" behaviour seen on the real TCU.
-    { .name = "TCU", .request_id = 0x7E1, .response_id = 0x7E9, .st_min_us = 10000 },
+    { .name = "TCU", .request_id = 0x7E1, .response_id = 0x7E9, .st_min_us = 10000, .obd = true, .no_uds_dtc = true },
+    // UDS-only modules (VAG style 0x7xx / +0x6A addressing) for the multi-module scan
+    { .name = "GATEWAY", .request_id = 0x710, .response_id = 0x77A, .st_min_us = 0 },
+    { .name = "ABS", .request_id = 0x713, .response_id = 0x77D, .st_min_us = 0 },
 };
+
+// Trouble codes the simulated modules start with, so the diagnostics screens have something to show and clear
+static void sim_reset_dtcs(void)
+{
+    memset(sim_nodes[0].dtcs, 0, sizeof(sim_nodes[0].dtcs));
+    sim_nodes[0].dtcs[0] = (sim_dtc_t){ 0x0300, 0x00, 0x89 };     // P0300 active, confirmed, lamp on
+    sim_nodes[0].dtcs[1] = (sim_dtc_t){ 0x0171, 0x00, 0x08 };     // P0171 stored
+    sim_nodes[0].dtcs[2] = (sim_dtc_t){ 0x0420, 0x00, 0x04 };     // P0420 pending only
+    sim_nodes[0].dtc_count = 3;
+    sim_nodes[1].dtcs[0] = (sim_dtc_t){ 0x0700, 0x00, 0x08 };     // P0700 stored
+    sim_nodes[1].dtc_count = 1;
+    sim_nodes[2].dtcs[0] = (sim_dtc_t){ 0xC100, 0x00, 0x28 };     // U0100 stored
+    sim_nodes[2].dtc_count = 1;
+    sim_nodes[3].dtcs[0] = (sim_dtc_t){ 0x4035, 0x00, 0x09 };     // C0035 active
+    sim_nodes[3].dtc_count = 1;
+}
+
+void bench_sim_set_sink(bench_sim_sink_t sink)
+{
+    sim_sink = sink;
+}
 
 bool bench_sim_active(void)
 {
@@ -102,9 +141,76 @@ static uint16_t sim_build_response(int node, const uint8_t *req, uint16_t len, u
             return 6;
         }
         return 2;
-    case 0x19:  // ReadDTCInformation: no DTCs
-        out[0] = 0x59; out[1] = sub; out[2] = 0xFF;
+    case 0x19: {  // ReadDTCInformation, reportDTCByStatusMask only
+        if (sim_nodes[node].no_uds_dtc) { out[0] = 0x7F; out[1] = sid; out[2] = 0x11; return 3; }
+        if (sub != 0x02) { out[0] = 0x7F; out[1] = sid; out[2] = 0x12; return 3; }
+        sim_node_t *n = &sim_nodes[node];
+        uint16_t pos = 0;
+        out[pos++] = 0x59; out[pos++] = sub; out[pos++] = 0xFF;
+        for (int i = 0; i < n->dtc_count; i++) {
+            if (!(n->dtcs[i].status & (len > 2 ? req[2] : 0xFF))) continue;
+            out[pos++] = n->dtcs[i].code >> 8; out[pos++] = n->dtcs[i].code & 0xFF;
+            out[pos++] = n->dtcs[i].fault_type; out[pos++] = n->dtcs[i].status;
+        }
+        return pos;
+    }
+    case 0x14:  // ClearDiagnosticInformation
+        sim_nodes[node].dtc_count = 0;
+        out[0] = 0x54;
+        return 1;
+    case 0x04:  // OBD-II clear DTCs
+        sim_nodes[node].dtc_count = 0;
+        out[0] = 0x44;
+        return 1;
+    case 0x03: case 0x07: case 0x0A: {  // OBD-II stored / pending / permanent DTCs
+        sim_node_t *n = &sim_nodes[node];
+        uint8_t want = sid == 0x03 ? 0x08 : (sid == 0x07 ? 0x04 : 0x00);
+        uint16_t pos = 2;
+        uint8_t count = 0;
+        for (int i = 0; i < n->dtc_count && want; i++) {
+            // mode 03 lists confirmed codes, mode 07 codes that are pending and not yet confirmed
+            bool match = sid == 0x03 ? (n->dtcs[i].status & 0x08) : ((n->dtcs[i].status & 0x04) && !(n->dtcs[i].status & 0x08));
+            if (!match) continue;
+            out[pos++] = n->dtcs[i].code >> 8; out[pos++] = n->dtcs[i].code & 0xFF;
+            count++;
+        }
+        out[0] = sid + 0x40; out[1] = count;
+        return pos;
+    }
+    case 0x01: {  // OBD-II current data
+        uint8_t pid = len > 1 ? req[1] : 0;
+        out[0] = 0x41; out[1] = pid;
+        switch (pid) {
+        case 0x00: out[2] = 0x98; out[3] = 0x3A; out[4] = 0x80; out[5] = 0x01; return 6;   // 01 04 05 0B 0C 0D 0F 11, then 0x20 for the next range
+        case 0x01: {
+            uint8_t count = 0;
+            for (int i = 0; i < sim_nodes[node].dtc_count; i++) if (sim_nodes[node].dtcs[i].status & 0x08) count++;
+            bool mil = false;
+            for (int i = 0; i < sim_nodes[node].dtc_count; i++) if (sim_nodes[node].dtcs[i].status & 0x80) mil = true;
+            out[2] = (mil ? 0x80 : 0) | count; out[3] = 0x07; out[4] = 0x65; out[5] = 0x04;
+            return 6;
+        }
+        case 0x04: out[2] = 70 + sim_value(node, pid, 0) % 40; return 3;
+        case 0x05: out[2] = 40 + 88; return 3;
+        case 0x0B: out[2] = 35; return 3;
+        case 0x0C: { uint16_t rpm4 = 3200 + (sim_value(node, pid, 0) % 64) * 20; out[2] = rpm4 >> 8; out[3] = rpm4 & 0xFF; return 4; }
+        case 0x0D: out[2] = 40 + sim_value(node, pid, 0) % 20; return 3;
+        case 0x0F: out[2] = 40 + 24; return 3;
+        case 0x11: out[2] = 40 + sim_value(node, pid, 0) % 30; return 3;
+        case 0x20: out[2] = 0x00; out[3] = 0x00; out[4] = 0x00; out[5] = 0x01; return 6;
+        case 0x40: out[2] = 0x40; out[3] = 0x00; out[4] = 0x00; out[5] = 0x00; return 6;
+        case 0x42: out[2] = 0x35; out[3] = 0xE8; return 4;                                  // 13.8 V
+        default: out[0] = 0x7F; out[1] = sid; out[2] = 0x12; return 3;
+        }
+    }
+    case 0x09: {  // OBD-II vehicle information
+        uint8_t pid = len > 1 ? req[1] : 0;
+        if (pid == 0x00) { out[0] = 0x49; out[1] = 0x00; out[2] = 0x50; out[3] = 0; out[4] = 0; out[5] = 0; return 6; }
+        if (pid == 0x02) { out[0] = 0x49; out[1] = 0x02; out[2] = 0x01; memcpy(out + 3, "SIMULATEDVIN00001", 17); return 20; }
+        if (pid == 0x04) { out[0] = 0x49; out[1] = 0x04; out[2] = 0x01; memset(out + 3, 0, 16); memcpy(out + 3, "SIM-CAL-0001", 12); return 19; }
+        out[0] = 0x7F; out[1] = sid; out[2] = 0x12;
         return 3;
+    }
     case 0x2E:  // WriteDataByIdentifier
         out[0] = 0x6E; out[1] = len > 1 ? req[1] : 0; out[2] = len > 2 ? req[2] : 0;
         return 3;
@@ -113,6 +219,11 @@ static uint16_t sim_build_response(int node, const uint8_t *req, uint16_t len, u
         if (len > 3) { out[2] = req[2]; out[3] = req[3]; return 4; }
         return 2;
     case 0x22: {  // ReadDataByIdentifier: each DID answers with 8 bytes, so replies are multi-frame
+        if (len == 3 && req[1] == 0xF1 && req[2] == 0x87) {     // spare part number
+            out[0] = 0x62; out[1] = 0xF1; out[2] = 0x87;
+            int k = snprintf((char *)out + 3, 20, "SIM-%s-PART", sim_nodes[node].name);
+            return 3 + k;
+        }
         uint16_t pos = 0;
         out[pos++] = 0x62;
         for (uint16_t i = 1; i + 1 < len && pos + 10 <= SIM_BUF_SIZE; i += 2) {
@@ -146,6 +257,17 @@ static uint16_t sim_build_response(int node, const uint8_t *req, uint16_t len, u
 
 static void sim_route_frame(const sim_frame_t *frame)
 {
+    // Functional OBD-II request: every OBD module hears it
+    if (frame->id == SIM_FUNCTIONAL_ID) {
+        for (int i = 0; i < SIM_NODE_COUNT; i++) {
+            if (!sim_nodes[i].obd) continue;
+            uint8_t data[8];
+            memcpy(data, frame->data, frame->len);
+            isotp_on_can_message(&sim_nodes[i].link, data, frame->len);
+        }
+        return;
+    }
+
     // A frame the dongle sent to a simulated module
     for (int i = 0; i < SIM_NODE_COUNT; i++) {
         if (frame->id == sim_nodes[i].request_id) {
@@ -187,6 +309,11 @@ static void sim_route_frame(const sim_frame_t *frame)
             return;
         }
     }
+
+    // No ISO-TP link wants it: hand it to the diagnostics tester, if there is one
+    if (sim_sink) {
+        sim_sink(frame->id, frame->data, frame->len);
+    }
 }
 
 static void sim_service_node(sim_node_t *node, int index)
@@ -226,6 +353,7 @@ static void sim_task(void *arg)
 void bench_sim_start(void)
 {
     sim_queue = xQueueCreate(SIM_QUEUE_LEN, sizeof(sim_frame_t));
+    sim_reset_dtcs();
     for (int i = 0; i < SIM_NODE_COUNT; i++) {
         sim_node_t *node = &sim_nodes[i];
         isotp_init_link(&node->link, node->response_id, node->request_id,
@@ -234,5 +362,5 @@ void bench_sim_start(void)
     }
     sim_active = true;
     xTaskCreate(sim_task, "bench_sim", 4096, NULL, 3, NULL);
-    ESP_LOGW(SIM_TAG, "Bench simulator running: virtual ECU 0x7E0/0x7E8 and TCU 0x7E1/0x7E9, no CAN traffic");
+    ESP_LOGW(SIM_TAG, "Bench simulator running: virtual ECU 0x7E0/0x7E8, TCU 0x7E1/0x7E9, gateway 0x710/0x77A and ABS 0x713/0x77D, no CAN traffic");
 }

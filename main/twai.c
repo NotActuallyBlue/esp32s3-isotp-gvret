@@ -123,6 +123,22 @@ void twai_start_task()
     ESP_LOGI(TWAI_TAG, "Tasks started");
 }
 
+// Driver and alert (bus-off recovery) task only: the caller reads frames with twai_receive itself.
+// Used by the diagnostics modes, where no ISO-TP links exist.
+void twai_start_raw()
+{
+    twai_stop_task();
+
+    ESP_ERROR_CHECK(twai_driver_install(&g_config, &t_config, &f_config));
+    ESP_ERROR_CHECK(twai_start());
+    twai_set_run_task(true);
+
+    xSemaphoreTake(sync_task_sem, 0);
+    xTaskCreate(twai_alert_task, "TWAI_alert", TASK_STACK_SIZE, NULL, TWAI_TASK_PRIO, NULL);
+    xSemaphoreTake(sync_task_sem, portMAX_DELAY);
+    ESP_LOGI(TWAI_TAG, "Driver started (raw)");
+}
+
 void twai_stop_task()
 {
     if (twai_allow_run_task()) {

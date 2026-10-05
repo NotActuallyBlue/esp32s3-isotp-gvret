@@ -77,13 +77,16 @@ static volatile bool        info_persist    = false;
 static volatile uint32_t    info_latency_ms[2] = { 0, 0 };
 
 // Detail rows replace the normal rows when set (used by the Wi-Fi update screen)
-#define MAX_DETAILS     8
+#define MAX_DETAILS     16
 typedef struct {
-    char label[16];
-    char value[24];
+    char        label[16];      // a leading '#' makes the row a section header
+    char        value[24];
+    uint16_t    color;          // 0 = default value color
 } detail_t;
 static detail_t             details[MAX_DETAILS];
 static int                  detail_count    = 0;
+static char                 details_title[16] = "UPDATE";
+static uint16_t             details_color   = 0;
 
 // Pages cycled with a short press of the BOOT button
 #define PAGE_COUNT      3
@@ -576,10 +579,32 @@ static int build_rows_info(row_t *rows)
 static int build_rows_detail(row_t *rows)
 {
     int n = 0;
-    add_section(rows, &n, "UPDATE", C_SYSTEM);
-    for (int i = 0; i < detail_count && i < MAX_DETAILS; i++) {
-        row_t *r = add_data_label(rows, &n, details[i].label);
-        strlcpy(r->value, details[i].value, sizeof(r->value));
+    detail_t local[MAX_DETAILS];
+    char title[sizeof(details_title)];
+    uint16_t title_color;
+    int count;
+
+    taskENTER_CRITICAL(&state_lock);
+        count = detail_count;
+        memcpy(local, details, sizeof(local));
+        strlcpy(title, details_title, sizeof(title));
+        title_color = details_color;
+    taskEXIT_CRITICAL(&state_lock);
+
+    add_section(rows, &n, title, title_color ? title_color : C_SYSTEM);
+    for (int i = 0; i < count && i < MAX_DETAILS; i++) {
+        if (local[i].label[0] == '#') {
+            row_t *s = &rows[n++];
+            s->kind = ROW_SECTION;
+            strlcpy(s->label_buf, local[i].label + 1, sizeof(s->label_buf));
+            s->label = s->label_buf;
+            s->value[0] = 0;
+            s->color = local[i].color ? local[i].color : C_LINK;
+            continue;
+        }
+        row_t *r = add_data_label(rows, &n, local[i].label);
+        strlcpy(r->value, local[i].value, sizeof(r->value));
+        if (local[i].color) r->color = local[i].color;
     }
     return n;
 }
@@ -637,8 +662,9 @@ static void display_draw_view(const display_view_t *v)
     } else if (v->icon == ICON_USB) {
         display_draw_icon(4, 2, icon_usb_32x32, COLOR_BLACK, v->color, 1);
     }
-    int title_scale = (text_width(v->title, 2) <= 126) ? 2 : 1;
-    display_draw_text(42, (HEADER_H - 8 * title_scale) / 2, LCD_H_RES - 42 - 4, v->title, COLOR_BLACK, v->color, title_scale, false);
+    int title_x = (v->icon == ICON_NONE) ? 8 : 42;
+    int title_scale = (text_width(v->title, 2) <= LCD_H_RES - title_x - 4) ? 2 : 1;
+    display_draw_text(title_x, (HEADER_H - 8 * title_scale) / 2, LCD_H_RES - title_x - 4, v->title, COLOR_BLACK, v->color, title_scale, false);
 
     // Status line in the state color
     int status_scale = (text_width(v->status, 2) <= LCD_H_RES - 8) ? 2 : 1;
@@ -782,6 +808,11 @@ void display_set_status(const char *transport, const char *status_msg, uint16_t 
     } else if (strstr(transport, "UPDATE") != NULL) {
         icon = ICON_NONE;
         header_label = "WIFI UPDATE";
+    } else if (strstr(transport, "DIAG") != NULL) {
+        icon = ICON_NONE;
+        header_label = bench_mode ? "BENCH DIAG" : "DIAG";
+    } else if (strstr(transport, "ELM") != NULL) {
+        header_label = bench_mode ? "BENCH ELM327" : "ELM327";
     } else if (strstr(transport, "SIMOS") != NULL || strstr(transport, "ISO-TP") != NULL || strstr(transport, "BLE") != NULL) {
         header_label = bench_mode ? "BENCH SIM" : "SIMOS";
     }
@@ -824,6 +855,7 @@ void display_set_detail(uint8_t index, const char *label, const char *value)
     taskENTER_CRITICAL(&state_lock);
         strlcpy(details[index].label, label, sizeof(details[index].label));
         strlcpy(details[index].value, value, sizeof(details[index].value));
+        details[index].color = 0;
         if (index >= detail_count) {
             detail_count = index + 1;
             view_dirty = true;      // the layout changed
@@ -832,10 +864,34 @@ void display_set_detail(uint8_t index, const char *label, const char *value)
     display_wake();
 }
 
+void display_set_details(const char *title, uint16_t title_color, const display_detail_t *rows, int count)
+{
+    if (count > MAX_DETAILS) count = MAX_DETAILS;
+    if (count < 1) {
+        display_clear_details();
+        return;
+    }
+    taskENTER_CRITICAL(&state_lock);
+        // Only a change in the number of rows needs the whole screen redrawn; otherwise just the rows that differ
+        if (count != detail_count || strcmp(title, details_title) != 0) view_dirty = true;
+        strlcpy(details_title, title, sizeof(details_title));
+        details_color = title_color;
+        for (int i = 0; i < count; i++) {
+            strlcpy(details[i].label, rows[i].label, sizeof(details[i].label));
+            strlcpy(details[i].value, rows[i].value ? rows[i].value : "", sizeof(details[i].value));
+            details[i].color = rows[i].color;
+        }
+        detail_count = count;
+    taskEXIT_CRITICAL(&state_lock);
+    display_wake();
+}
+
 void display_clear_details(void)
 {
     taskENTER_CRITICAL(&state_lock);
         detail_count = 0;
+        strlcpy(details_title, "UPDATE", sizeof(details_title));
+        details_color = 0;
         view_dirty = true;
     taskEXIT_CRITICAL(&state_lock);
     display_wake();

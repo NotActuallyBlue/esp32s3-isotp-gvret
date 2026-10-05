@@ -56,6 +56,15 @@ void display_next_page(void);
 void display_set_detail(uint8_t index, const char *label, const char *value);
 void display_clear_details(void);
 
+// Replace all detail rows at once (up to 16) under a section title. A label starting with '#' is drawn as
+// a section header. Color 0 = default. Only rows that changed are redrawn, so this can be called often.
+typedef struct {
+    const char *label;
+    const char *value;
+    uint16_t    color;
+} display_detail_t;
+void display_set_details(const char *title, uint16_t title_color, const display_detail_t *rows, int count);
+
 // Compatibility shim with existing calls
 void display_set_status(const char *transport, const char *status_msg, uint16_t color);
 

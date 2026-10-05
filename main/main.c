@@ -24,6 +24,10 @@
 #include "flashlog.h"
 #include "bench_sim.h"
 #include "ota_update.h"
+#include "diag.h"
+#include "elm_mode.h"
+#include "power_mgr.h"
+#include "esp_sleep.h"
 #include "esp_app_desc.h"
 #include "esp_ota_ops.h"
 #include "esp_flash.h"
@@ -31,6 +35,10 @@
 SemaphoreHandle_t sync_task_sem = NULL;
 
 #define MAIN_TAG    "Main"
+
+static bool ble_busy(void) {
+    return ble_connected();
+}
 
 static void app_ble_connected(void) {
     display_set_status("BLE ISO-TP", "CONNECTED", COLOR_GREEN);
@@ -66,12 +74,17 @@ void app_main(void)
     // Setup FreeRTOS task synchronization
     sync_task_sem = xSemaphoreCreateBinary();
 
-    bool bench = (current_mode == OP_MODE_BENCH_SIM);
+    bool bench = mode_mgr_is_bench();
     display_set_bench(bench);
 
-    if (current_mode == OP_MODE_SIMOS_BLE || bench) {
+    if (esp_reset_reason() == ESP_RST_DEEPSLEEP) {
+        uint32_t wake = esp_sleep_get_wakeup_causes();
+        ESP_LOGI(MAIN_TAG, "Woken from deep sleep by %s", (wake & BIT(ESP_SLEEP_WAKEUP_EXT1)) ? "the CAN bus or the BOOT button" : "another source");
+    }
+
+    if (current_mode == OP_MODE_SIMOS_BLE) {
         if (bench) {
-            ESP_LOGI(MAIN_TAG, "Booting in BENCH SIMULATOR Mode (virtual ECU and TCU, no CAN bus)");
+            ESP_LOGI(MAIN_TAG, "Booting in SIMOS BLE Mode on the BENCH SIMULATOR (virtual modules, no CAN bus)");
         } else {
             ESP_LOGI(MAIN_TAG, "Booting in SIMOS BLE ISO-TP Mode");
         }
@@ -112,7 +125,20 @@ void app_main(void)
         ch_start_task();
 
         ESP_LOGI(MAIN_TAG, "Simos BLE services running.");
+        if (!bench) power_mgr_start(ble_busy);
     } 
+    else if (current_mode == OP_MODE_DIAG) {
+        ESP_LOGI(MAIN_TAG, "Booting in DIAG Mode%s", bench ? " (bench simulator)" : "");
+        display_set_status("DIAG", "READY", COLOR_CYAN);
+        diag_start(bench);
+        if (!bench) power_mgr_start(NULL);
+    }
+    else if (current_mode == OP_MODE_ELM327) {
+        ESP_LOGI(MAIN_TAG, "Booting in ELM327 Mode%s", bench ? " (bench simulator)" : "");
+        display_set_status("ELM327", "READY", COLOR_CYAN);
+        elm_mode_start(bench);
+        if (!bench) power_mgr_start(elm_mode_clients_connected);
+    }
     else if (current_mode == OP_MODE_WIFI_UPDATE) {
         ESP_LOGI(MAIN_TAG, "Booting in WIFI UPDATE Mode");
         ota_update_start();

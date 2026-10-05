@@ -24,24 +24,31 @@ static dongle_mode_t current_mode = OP_MODE_SIMOS_BLE;     // what is running no
 
 // Button menu: hold the BOOT button and let go when the screen shows what you want
 //   tap                  next page
-//   hold  2 s .. 5 s     switch between the saved modes (Simos BLE / SavvyCAN)
-//   hold  5 s .. 8 s     bench simulator (this boot only)
-//   hold  8 s .. 11 s    Wi-Fi firmware update (this boot only)
-//   hold  11 s +         cancel (restart unchanged)
+//   hold  2 s .. 6.5 s   switch to the next saved mode, every 1.5 s further along (Simos, SavvyCAN, Diag, ELM327)
+//   hold  6.5 s .. 8 s   bench simulator (this boot only)
+//   hold  8 s .. 9.5 s   Wi-Fi firmware update (this boot only)
+//   hold  9.5 s +        cancel (restart unchanged)
 #define HOLD_SWITCH_MS   2000
-#define HOLD_BENCH_MS    5000
-#define HOLD_UPDATE_MS   8000
-#define HOLD_CANCEL_MS   11000
+#define HOLD_STEP_MS     1500
+#define HOLD_BENCH_MS    (HOLD_SWITCH_MS + (OP_MODE_COUNT - 1) * HOLD_STEP_MS)
+#define HOLD_UPDATE_MS   (HOLD_BENCH_MS + HOLD_STEP_MS)
+#define HOLD_CANCEL_MS   (HOLD_UPDATE_MS + HOLD_STEP_MS)
 #define TAP_MAX_MS       800
 #define BUTTON_POLL_MS   50
 
-typedef enum { ZONE_NONE, ZONE_SWITCH, ZONE_BENCH, ZONE_UPDATE, ZONE_CANCEL } hold_zone_t;
+// 1 .. OP_MODE_COUNT-1 = switch forward by that many saved modes
+typedef enum { ZONE_NONE = 0, ZONE_BENCH = 100, ZONE_UPDATE, ZONE_CANCEL } hold_zone_t;
+
+static bool bench_boot = false;                         // this boot runs against the simulator
+static void (*tap_handler)(void) = NULL;
 
 static const char* get_mode_name(dongle_mode_t mode)
 {
     switch (mode) {
         case OP_MODE_SIMOS_BLE:      return "SIMOS BLE";
         case OP_MODE_SAVVYCAN_GVRET: return "SAVVYCAN USB";
+        case OP_MODE_DIAG:           return "DIAG";
+        case OP_MODE_ELM327:         return "ELM327";
         case OP_MODE_BENCH_SIM:      return "BENCH SIM";
         case OP_MODE_WIFI_UPDATE:    return "WIFI UPDATE";
         default:                     return "UNKNOWN";
@@ -51,26 +58,34 @@ static const char* get_mode_name(dongle_mode_t mode)
 static hold_zone_t zone_for(int held_ms)
 {
     if (held_ms < HOLD_SWITCH_MS) return ZONE_NONE;
-    if (held_ms < HOLD_BENCH_MS)  return ZONE_SWITCH;
+    if (held_ms < HOLD_BENCH_MS)  return (hold_zone_t)(1 + (held_ms - HOLD_SWITCH_MS) / HOLD_STEP_MS);
     if (held_ms < HOLD_UPDATE_MS) return ZONE_BENCH;
     if (held_ms < HOLD_CANCEL_MS) return ZONE_UPDATE;
     return ZONE_CANCEL;
 }
 
-static dongle_mode_t next_saved_mode(void)
+static dongle_mode_t saved_mode_ahead(int steps)
 {
-    return (dongle_mode_t)((saved_mode + 1) % OP_MODE_COUNT);
+    return (dongle_mode_t)((saved_mode + steps) % OP_MODE_COUNT);
 }
 
 static const char* short_mode_name(dongle_mode_t mode)
 {
-    return mode == OP_MODE_SAVVYCAN_GVRET ? "SAVVYCAN" : "SIMOS";
+    switch (mode) {
+        case OP_MODE_SAVVYCAN_GVRET: return "SAVVYCAN";
+        case OP_MODE_DIAG:           return "DIAG";
+        case OP_MODE_ELM327:         return "ELM327";
+        default:                     return "SIMOS";
+    }
 }
 
 static void show_prompt(hold_zone_t zone)
 {
+    if (zone > ZONE_NONE && zone < ZONE_BENCH) {
+        display_set_prompt("RELEASE TO", short_mode_name(saved_mode_ahead(zone)), COLOR_YELLOW);
+        return;
+    }
     switch (zone) {
-        case ZONE_SWITCH: display_set_prompt("RELEASE TO",  short_mode_name(next_saved_mode()), COLOR_YELLOW); break;
         case ZONE_BENCH:  display_set_prompt("RELEASE FOR", "BENCH SIM",   COLOR_CYAN);   break;
         case ZONE_UPDATE: display_set_prompt("RELEASE FOR", "WIFI UPDATE", COLOR_ORANGE); break;
         case ZONE_CANCEL: display_set_prompt("RELEASE TO",  "CANCEL",      COLOR_RED);    break;
@@ -80,12 +95,14 @@ static void show_prompt(hold_zone_t zone)
 
 static void restart_with(hold_zone_t zone)
 {
+    if (zone > ZONE_NONE && zone < ZONE_BENCH) {
+        ESP_LOGI(TAG, "Switching saved mode forward by %d", (int)zone);
+        mode_mgr_set(saved_mode_ahead(zone));
+        display_set_prompt(short_mode_name(saved_mode), "REBOOTING", COLOR_YELLOW);
+        vTaskDelay(pdMS_TO_TICKS(800));
+        esp_restart();
+    }
     switch (zone) {
-        case ZONE_SWITCH:
-            ESP_LOGI(TAG, "Runtime mode toggle triggered!");
-            mode_mgr_toggle();
-            display_set_status(get_mode_name(saved_mode), "REBOOTING...", COLOR_YELLOW);
-            break;
         case ZONE_BENCH:
             ESP_LOGI(TAG, "Restarting into the bench simulator (one-shot)");
             mode_mgr_request_oneshot(OP_MODE_BENCH_SIM);
@@ -131,7 +148,8 @@ static void mode_button_monitor_task(void *pvParameters)
             if (shown != ZONE_NONE) {
                 restart_with(shown);
             } else if (held_ms < TAP_MAX_MS && !woke_screen) {
-                display_next_page();
+                if (tap_handler) tap_handler();
+                else display_next_page();
             }
             held_ms = 0;
             shown = ZONE_NONE;
@@ -168,20 +186,28 @@ void mode_mgr_init(void)
     current_mode = saved_mode;
 
     // A one-shot request only counts right after a software restart, and only once
-    if (esp_reset_reason() == ESP_RST_SW && oneshot_magic == ONESHOT_MAGIC &&
-        (oneshot_mode == OP_MODE_BENCH_SIM || oneshot_mode == OP_MODE_WIFI_UPDATE)) {
-        current_mode = (dongle_mode_t)oneshot_mode;
+    if (esp_reset_reason() == ESP_RST_SW && oneshot_magic == ONESHOT_MAGIC) {
+        if (oneshot_mode == OP_MODE_BENCH_SIM) {
+            bench_boot = true;                  // keep the saved mode, but talk to the simulator
+        } else if (oneshot_mode == OP_MODE_WIFI_UPDATE) {
+            current_mode = OP_MODE_WIFI_UPDATE;
+        }
     }
     oneshot_magic = 0;
 
 #ifdef FORCE_BENCH_SIM
-    current_mode = OP_MODE_BENCH_SIM;      // test builds only: PLATFORMIO_BUILD_FLAGS=-DFORCE_BENCH_SIM pio run -t upload
+    bench_boot = true;                     // test builds only: PLATFORMIO_BUILD_FLAGS=-DFORCE_BENCH_SIM pio run -t upload
 #endif
+#ifdef FORCE_MODE
+    current_mode = (dongle_mode_t)FORCE_MODE;   // test builds only: -DFORCE_MODE=2 (diag) or 3 (ELM327), not saved
+#endif
+    if (bench_boot && current_mode == OP_MODE_SAVVYCAN_GVRET) current_mode = OP_MODE_SIMOS_BLE;
 #ifdef FORCE_WIFI_UPDATE
     current_mode = OP_MODE_WIFI_UPDATE;    // test builds only, see FORCE_BENCH_SIM
 #endif
 
-    ESP_LOGI(TAG, "Active mode: %s (%d), saved mode: %s", get_mode_name(current_mode), current_mode, get_mode_name(saved_mode));
+    ESP_LOGI(TAG, "Active mode: %s (%d)%s, saved mode: %s", get_mode_name(current_mode), current_mode,
+             bench_boot ? " on the bench simulator" : "", get_mode_name(saved_mode));
 
     // Launch the runtime button listener task
     xTaskCreate(mode_button_monitor_task, "mode_btn_task", 2048, NULL, 1, NULL);
@@ -210,7 +236,17 @@ void mode_mgr_set(dongle_mode_t mode)
 
 void mode_mgr_toggle(void)
 {
-    mode_mgr_set(next_saved_mode());
+    mode_mgr_set(saved_mode_ahead(1));
+}
+
+bool mode_mgr_is_bench(void)
+{
+    return bench_boot;
+}
+
+void mode_mgr_set_tap_handler(void (*handler)(void))
+{
+    tap_handler = handler;
 }
 
 void mode_mgr_request_oneshot(dongle_mode_t mode)
