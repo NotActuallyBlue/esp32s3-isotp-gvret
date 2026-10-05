@@ -159,16 +159,78 @@ uint16_t persist_enabled()
 
 static volatile uint32_t persist_enabled_at_ms = 0;
 
+// Per-frame lines are plentiful (one per CAN frame), so the whole boot gets a fixed budget of them. Without
+// the budget a retrying app keeps the window open and the log fills with the same exchange.
+#define PERSIST_LOG_BUDGET  1200
+static volatile uint32_t persist_log_budget = PERSIST_LOG_BUDGET;
+
 bool persist_log_window(void)
 {
 	uint32_t started = persist_enabled_at_ms;
-	return started && ((esp_timer_get_time() / 1000UL) - started) < 1500;
+	if (!started || ((esp_timer_get_time() / 1000UL) - started) >= 1500 || persist_log_budget == 0)
+		return false;
+	persist_log_budget--;
+	return true;
+}
+
+// How each persist session went: the app enables persist, waits a fixed time for every registered request to
+// answer, then disables it. A reply that comes after that is too late for the "create PID frame" check.
+static volatile uint32_t session_start_ms;
+static volatile uint32_t session_end_ms;
+static volatile uint32_t first_reply_ms[PERSIST_COUNT];
+static volatile uint32_t reply_count[PERSIST_COUNT];
+
+static uint32_t now_ms(void)
+{
+	return (uint32_t)(esp_timer_get_time() / 1000ULL);
+}
+
+void persist_note_reply(uint16_t link)
+{
+	if (link >= PERSIST_COUNT || !session_start_ms)
+		return;
+	if (reply_count[link]++ == 0)
+		first_reply_ms[link] = now_ms() - session_start_ms;
+}
+
+void persist_note_late_reply(uint16_t link)
+{
+	if (link >= PERSIST_COUNT || !session_end_ms)
+		return;
+	uint32_t late = now_ms() - session_end_ms;
+	if (late < 400 && reply_count[link] == 0)       // only a link that said nothing during the session counts as a miss
+		ESP_LOGW(PERSIST_TAG, "Link %u first answered %lu ms after persist was switched off: too late for the app's check", link, (unsigned long)late);
+}
+
+static void persist_session_begin(void)
+{
+	session_start_ms = now_ms();
+	session_end_ms = 0;
+	for (int i = 0; i < PERSIST_COUNT; i++) {
+		first_reply_ms[i] = 0;
+		reply_count[i] = 0;
+	}
+}
+
+static void persist_session_end(void)
+{
+	if (!session_start_ms || session_end_ms)
+		return;
+	session_end_ms = now_ms();
+	ESP_LOGI(PERSIST_TAG, "Session: persist on for %lu ms | ECU: %lu replies, first after %lu ms | TCU: %lu replies, first after %lu ms",
+	         (unsigned long)(session_end_ms - session_start_ms),
+	         (unsigned long)reply_count[0], (unsigned long)first_reply_ms[0],
+	         (unsigned long)reply_count[1], (unsigned long)first_reply_ms[1]);
 }
 
 void persist_set(uint16_t enable)
 {
-	if (enable)
+	if (enable) {
 		persist_enabled_at_ms = (esp_timer_get_time() / 1000UL) | 1;
+		persist_session_begin();
+	} else {
+		persist_session_end();
+	}
 
 	tMUTEX(persist_settings_mutex);
 		persist_msg_enabled = enable;

@@ -16,6 +16,8 @@ void         persist_set(uint16_t enable);
 int16_t      persist_add(uint16_t rx, uint16_t tx, const void* src, size_t size);
 void         persist_clear(void);
 bool         persist_log_window(void);
+void         persist_note_reply(uint16_t link);          // a reply was delivered while persist was on
+void         persist_note_late_reply(uint16_t link);     // a reply arrived just after persist was switched off
 
 // Per-frame traffic is only logged for a short window after persist starts, to keep the flash log small
 #define PERSIST_LOG_WINDOW(tag, ...) ESP_LOG_LEVEL(persist_log_window() ? ESP_LOG_INFO : ESP_LOG_DEBUG, tag, __VA_ARGS__)

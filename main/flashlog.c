@@ -24,7 +24,8 @@
 #define FLASHLOG_HEADER_SIZE    32
 #define FLASHLOG_RINGBUF_SIZE   (16 * 1024)
 #define FLASHLOG_LINE_SIZE      256
-#define FLASHLOG_FLUSH_MS       500
+#define FLASHLOG_FLUSH_MS       200
+#define FLASHLOG_FLUSH_MAX      (8 * 1024)      // per pass; a busy bus logs far more than 4 KB/s
 #define FLASHLOG_TASK_STACK     3072
 #define FLASHLOG_TASK_PRIO      1
 
@@ -125,32 +126,35 @@ static void flashlog_task(void* arg)
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(FLASHLOG_FLUSH_MS));
 
-        // Gather everything queued since the last flush into one flash write
-        size_t used = 0;
-        while (used < sizeof(log_flush_buf)) {
-            size_t size = 0;
-            void* item = xRingbufferReceiveUpTo(log_ringbuf, &size, 0, sizeof(log_flush_buf) - used);
-            if (!item) {
+        // Drain what accumulated since the last pass, one flash write per buffer-full
+        size_t total = 0;
+        while (total < FLASHLOG_FLUSH_MAX) {
+            size_t used = 0;
+
+            // Lines that did not fit in the ring buffer are reported first, so the gap is visible in the log
+            uint32_t dropped = log_dropped;
+            if (dropped != reported_dropped) {
+                used = snprintf((char *)log_flush_buf, sizeof(log_flush_buf), "[FLASHLOG] %lu lines dropped\n",
+                                (unsigned long)(dropped - reported_dropped));
+                reported_dropped = dropped;
+            }
+
+            while (used < sizeof(log_flush_buf)) {
+                size_t size = 0;
+                void* item = xRingbufferReceiveUpTo(log_ringbuf, &size, 0, sizeof(log_flush_buf) - used);
+                if (!item) {
+                    break;
+                }
+                memcpy(log_flush_buf + used, item, size);
+                used += size;
+                vRingbufferReturnItem(log_ringbuf, item);
+            }
+
+            if (!used) {
                 break;
             }
-            memcpy(log_flush_buf + used, item, size);
-            used += size;
-            vRingbufferReturnItem(log_ringbuf, item);
-        }
-
-        uint32_t dropped = log_dropped;
-        if (dropped != reported_dropped) {
-            char msg[48];
-            int len = snprintf(msg, sizeof(msg), "[FLASHLOG] %lu lines dropped\n", (unsigned long)(dropped - reported_dropped));
-            reported_dropped = dropped;
-            if (used + len <= sizeof(log_flush_buf)) {
-                memcpy(log_flush_buf + used, msg, len);
-                used += len;
-            }
-        }
-
-        if (used) {
             flashlog_write(log_flush_buf, used);
+            total += used;
         }
     }
 }

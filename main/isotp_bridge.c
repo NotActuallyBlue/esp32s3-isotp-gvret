@@ -180,8 +180,10 @@ static void isotp_processing_task(void *arg)
                     uint16_t rxID = (time >> 16) & 0xFFFF;
                     uint16_t txID = time & 0xFFFF;
                     bridge_send_packet(txID, rxID, 0, payload_buf, out_size);
+                    persist_note_reply(number);
                     persist_allow_send(number);
                 } else {
+                    persist_note_late_reply(number);
                     tMUTEX(isotp_link_container->data_mutex);
                         uint32_t txID = link_ptr->receive_arbitration_id;
                         uint32_t rxID = link_ptr->send_arbitration_id;
