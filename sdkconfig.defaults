@@ -26,3 +26,8 @@ CONFIG_LOG_TIMESTAMP_SOURCE_SYSTEM=y
 
 # 1 ms RTOS tick so short waits and delays are not rounded to 10 ms
 CONFIG_FREERTOS_HZ=1000
+
+# 16 MB flash, two OTA slots with rollback, core dump to flash (see partitions.csv)
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y

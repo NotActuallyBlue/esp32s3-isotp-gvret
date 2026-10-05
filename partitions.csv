@@ -1,6 +1,10 @@
 # Name,     Type, SubType, Offset,   Size
-# Same layout as the default single-app table, plus a "log" partition for flashlog.c
+# 16 MB flash (the upload uses --flash_size 16MB). Two OTA app slots, a core dump partition,
+# and the "log" partition used by flashlog.c. NVS keeps its original address so settings survive.
 nvs,        data, nvs,     0x9000,   0x6000
-phy_init,   data, phy,     0xf000,   0x1000
-factory,    app,  factory, 0x10000,  1M
-log,        data, 0x40,    0x110000, 0xF0000
+otadata,    data, ota,     0xF000,   0x2000
+phy_init,   data, phy,     0x11000,  0x1000
+ota_0,      app,  ota_0,   0x20000,  0x200000
+ota_1,      app,  ota_1,   0x220000, 0x200000
+coredump,   data, coredump,0x420000, 0x40000
+log,        data, 0x40,    0x460000, 0x180000

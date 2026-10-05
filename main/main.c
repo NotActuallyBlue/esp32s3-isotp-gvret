@@ -22,6 +22,9 @@
 #include "mode_mgr.h"
 #include "gvret.h"
 #include "flashlog.h"
+#include "esp_app_desc.h"
+#include "esp_ota_ops.h"
+#include "esp_flash.h"
 
 SemaphoreHandle_t sync_task_sem = NULL;
 
@@ -50,6 +53,13 @@ void app_main(void)
 {
     flashlog_init();
     ESP_LOGI(MAIN_TAG, "Application starting");
+
+    const esp_app_desc_t *app = esp_app_get_description();
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    uint32_t flash_size = 0;
+    esp_flash_get_physical_size(NULL, &flash_size);
+    ESP_LOGI(MAIN_TAG, "Build %s %s (IDF %s), running from %s, %lu MB flash",
+             app->date, app->time, app->idf_ver, running ? running->label : "?", (unsigned long)(flash_size >> 20));
 
     // Initialize display immediately
     display_init();
@@ -113,8 +123,18 @@ void app_main(void)
         ESP_LOGI(MAIN_TAG, "SavvyCAN GVRET services running.");
     }
 
-    // Main system heartbeat loop
+    // Main system heartbeat loop. A freshly updated image is only kept once it has run for 20 s;
+    // if it crashes before that, the bootloader rolls back to the previous image.
+    int uptime_ticks = 0;
+    bool image_validated = false;
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(500));
+
+        if (!image_validated && ++uptime_ticks >= 40) {
+            image_validated = true;
+            if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+                ESP_LOGI(MAIN_TAG, "Image marked valid");
+            }
+        }
     }
 }
