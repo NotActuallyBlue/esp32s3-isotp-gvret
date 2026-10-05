@@ -14,6 +14,11 @@
 #include "esp_log.h"
 #include "display.h"
 #include "flashlog.h"
+#include "canstats.h"
+#include "esp_app_desc.h"
+#include "esp_ota_ops.h"
+#include "esp_flash.h"
+#include "esp_heap_caps.h"
 
 #define TAG "DISPLAY"
 
@@ -48,6 +53,7 @@ volatile uint32_t g_error_count = 0;
 static esp_lcd_panel_handle_t panel_handle = NULL;
 static TimerHandle_t display_timer = NULL;
 static bool display_is_on = true;
+static bool bench_mode = false;
 
 // Everything is drawn by display_task. Other tasks only set the state below, so no two tasks ever
 // draw at once and the pixel strip is never overwritten while a transfer is still using it.
@@ -56,9 +62,10 @@ typedef struct {
     display_icon_t  icon;
     char            status[16];
     uint16_t        color;
+    bool            prompt;     // header and status only (used for the button menu)
 } display_view_t;
 
-static display_view_t       view            = { "STANDBY", ICON_BLUETOOTH, "READY", COLOR_CYAN };
+static display_view_t       view            = { "STANDBY", ICON_BLUETOOTH, "READY", COLOR_CYAN, false };
 static bool                 view_dirty      = true;
 static portMUX_TYPE         state_lock      = portMUX_INITIALIZER_UNLOCKED;
 static TaskHandle_t         display_task_handle = NULL;
@@ -68,6 +75,19 @@ static volatile uint16_t    info_mtu        = 0;
 static volatile uint16_t    info_conn_int   = 0;    // units of 1.25 ms
 static volatile bool        info_persist    = false;
 static volatile uint32_t    info_latency_ms[2] = { 0, 0 };
+
+// Detail rows replace the normal rows when set (used by the Wi-Fi update screen)
+#define MAX_DETAILS     8
+typedef struct {
+    char label[16];
+    char value[24];
+} detail_t;
+static detail_t             details[MAX_DETAILS];
+static int                  detail_count    = 0;
+
+// Pages cycled with a short press of the BOOT button
+#define PAGE_COUNT      3
+static volatile int         page            = 0;
 
 // Basic 8x8 ASCII Font
 static const uint8_t font8x8_basic[95][8] = {
@@ -281,6 +301,11 @@ void display_power(bool enable)
     gpio_set_level(PIN_NUM_BK_LIGHT, enable ? 1 : 0);
 }
 
+bool display_is_awake(void)
+{
+    return display_is_on;
+}
+
 static void display_timer_callback(TimerHandle_t xTimer)
 {
     display_power(false);
@@ -304,15 +329,16 @@ static void display_bump_timer(void)
 #define SECTION_GAP     5
 #define BOTTOM_DIVIDER_Y 254
 #define COUNTERS_Y      262
-#define MAX_ROWS        16
+#define MAX_ROWS        24
 
 typedef enum { ROW_SECTION, ROW_DATA } row_kind_t;
 
 typedef struct {
     row_kind_t  kind;
     const char *label;
+    char        label_buf[16];  // storage for labels that are built at run time
     char        value[24];
-    uint16_t    color;      // section accent or value color
+    uint16_t    color;          // section accent or value color
 } row_t;
 
 static char row_key[MAX_ROWS][64];
@@ -321,7 +347,7 @@ static char tx_key[32];
 
 static bool view_shows_simos(const display_view_t *v)
 {
-    return strcmp(v->title, "SIMOS") == 0;
+    return strcmp(v->title, "SIMOS") == 0 || strcmp(v->title, "BENCH SIM") == 0;
 }
 
 static void add_section(row_t *rows, int *n, const char *label, uint16_t accent)
@@ -340,6 +366,14 @@ static row_t *add_data(row_t *rows, int *n, const char *label)
     r->label = label;
     r->value[0] = 0;
     r->color = C_VALUE;
+    return r;
+}
+
+static row_t *add_data_label(row_t *rows, int *n, const char *label)
+{
+    row_t *r = add_data(rows, n, "");
+    strlcpy(r->label_buf, label, sizeof(r->label_buf));
+    r->label = r->label_buf;
     return r;
 }
 
@@ -377,7 +411,7 @@ static void format_can(row_t *r)
     else r->color = C_GOOD;
 }
 
-static int build_rows(const display_view_t *v, row_t *rows, uint32_t notify_rate)
+static int build_rows_status(const display_view_t *v, row_t *rows, uint32_t notify_rate)
 {
     int n = 0;
     row_t *r;
@@ -429,6 +463,137 @@ static int build_rows(const display_view_t *v, row_t *rows, uint32_t notify_rate
     return n;
 }
 
+static int build_rows_bus(row_t *rows)
+{
+    static canstats_totals_t prev;
+    static int64_t prev_us;
+    static uint32_t fps, load_x10;
+
+    canstats_totals_t t;
+    canstats_get_totals(&t);
+    int64_t now = esp_timer_get_time();
+    if (now - prev_us >= 1000000) {
+        int64_t dt = now - prev_us;
+        fps = (uint32_t)((int64_t)(t.frames - prev.frames) * 1000000 / dt);
+        load_x10 = (uint32_t)((int64_t)(t.bits - prev.bits) * 1000000 / dt / 500);     // 500 kbit/s bus, tenths of a percent
+        prev = t;
+        prev_us = now;
+    }
+
+    int n = 0;
+    row_t *r;
+    add_section(rows, &n, "TRAFFIC", C_BUS);
+    r = add_data(rows, &n, "FRAMES/s");
+    snprintf(r->value, sizeof(r->value), "%lu", (unsigned long)fps);
+    r = add_data(rows, &n, "BUS LOAD");
+    snprintf(r->value, sizeof(r->value), "~%lu.%lu %%", (unsigned long)(load_x10 / 10), (unsigned long)(load_x10 % 10));
+    r->color = load_x10 < 400 ? C_GOOD : (load_x10 < 700 ? C_WARN : C_BAD);
+    r = add_data(rows, &n, "IDS SEEN");
+    snprintf(r->value, sizeof(r->value), "%lu", (unsigned long)t.unique_ids);
+    r = add_data(rows, &n, "FRAMES");
+    snprintf(r->value, sizeof(r->value), "%lu", (unsigned long)t.frames);
+
+    uint32_t ids[6], counts[6];
+    int top = canstats_top_ids(ids, counts, 6);
+    if (top) add_section(rows, &n, "BUSIEST IDS", C_LINK);
+    for (int i = 0; i < top; i++) {
+        char label[16];
+        snprintf(label, sizeof(label), "0x%03lX", (unsigned long)ids[i]);
+        r = add_data_label(rows, &n, label);
+        snprintf(r->value, sizeof(r->value), "%lu", (unsigned long)counts[i]);
+    }
+
+    add_section(rows, &n, "FAULTS", C_SYSTEM);
+    format_can(add_data(rows, &n, "CAN"));
+    r = add_data(rows, &n, "TX FAILS");
+    snprintf(r->value, sizeof(r->value), "%lu", (unsigned long)t.tx_failures);
+    r->color = t.tx_failures ? C_WARN : C_GOOD;
+    r = add_data(rows, &n, "WARN/PASS/OFF");
+    snprintf(r->value, sizeof(r->value), "%lu/%lu/%lu", (unsigned long)t.events[0], (unsigned long)t.events[1], (unsigned long)t.events[2]);
+    r->color = (t.events[1] || t.events[2]) ? C_WARN : C_VALUE;
+    return n;
+}
+
+static const char *reset_reason_name(esp_reset_reason_t reason)
+{
+    switch (reason) {
+    case ESP_RST_POWERON:   return "POWER ON";
+    case ESP_RST_SW:        return "SOFTWARE";
+    case ESP_RST_PANIC:     return "PANIC";
+    case ESP_RST_INT_WDT:   return "INT WDT";
+    case ESP_RST_TASK_WDT:  return "TASK WDT";
+    case ESP_RST_WDT:       return "WDT";
+    case ESP_RST_DEEPSLEEP: return "DEEP SLEEP";
+    case ESP_RST_BROWNOUT:  return "BROWNOUT";
+    case ESP_RST_USB:       return "USB";
+    default:                return "OTHER";
+    }
+}
+
+static int build_rows_info(row_t *rows)
+{
+    int n = 0;
+    row_t *r;
+    const esp_app_desc_t *app = esp_app_get_description();
+    const esp_partition_t *running = esp_ota_get_running_partition();
+
+    add_section(rows, &n, "FIRMWARE", C_LINK);
+    r = add_data(rows, &n, "BUILD");
+    snprintf(r->value, sizeof(r->value), "%.16s", app->date);
+    r = add_data(rows, &n, "TIME");
+    snprintf(r->value, sizeof(r->value), "%.16s", app->time);
+    r = add_data(rows, &n, "IDF");
+    snprintf(r->value, sizeof(r->value), "%.16s", app->idf_ver);
+    r = add_data(rows, &n, "SLOT");
+    snprintf(r->value, sizeof(r->value), "%.16s", running ? running->label : "?");
+
+    add_section(rows, &n, "BOOT", C_BUS);
+    esp_reset_reason_t reason = esp_reset_reason();
+    r = add_data(rows, &n, "RESET");
+    snprintf(r->value, sizeof(r->value), "%s", reset_reason_name(reason));
+    r->color = (reason == ESP_RST_PANIC || reason == ESP_RST_INT_WDT || reason == ESP_RST_TASK_WDT || reason == ESP_RST_BROWNOUT) ? C_BAD : C_VALUE;
+    r = add_data(rows, &n, "FLASH");
+    uint32_t flash_size = 0;
+    esp_flash_get_physical_size(NULL, &flash_size);
+    snprintf(r->value, sizeof(r->value), "%lu MB", (unsigned long)(flash_size >> 20));
+    r = add_data(rows, &n, "FLASH LOG");
+    uint32_t boot = flashlog_boot_number();
+    if (boot) snprintf(r->value, sizeof(r->value), "#%lu  %u%%", (unsigned long)boot, flashlog_used_percent());
+    else snprintf(r->value, sizeof(r->value), "off");
+
+    add_section(rows, &n, "MEMORY", C_SYSTEM);
+    r = add_data(rows, &n, "HEAP FREE");
+    snprintf(r->value, sizeof(r->value), "%lu KB", (unsigned long)(esp_get_free_heap_size() / 1024));
+    r = add_data(rows, &n, "HEAP MIN");
+    uint32_t min_kb = esp_get_minimum_free_heap_size() / 1024;
+    snprintf(r->value, sizeof(r->value), "%lu KB", (unsigned long)min_kb);
+    r->color = min_kb < 20 ? C_WARN : C_VALUE;
+    r = add_data(rows, &n, "LARGEST BLOCK");
+    snprintf(r->value, sizeof(r->value), "%lu KB", (unsigned long)(heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT) / 1024));
+    return n;
+}
+
+static int build_rows_detail(row_t *rows)
+{
+    int n = 0;
+    add_section(rows, &n, "UPDATE", C_SYSTEM);
+    for (int i = 0; i < detail_count && i < MAX_DETAILS; i++) {
+        row_t *r = add_data_label(rows, &n, details[i].label);
+        strlcpy(r->value, details[i].value, sizeof(r->value));
+    }
+    return n;
+}
+
+static int build_rows(const display_view_t *v, row_t *rows, uint32_t notify_rate)
+{
+    if (detail_count > 0) return build_rows_detail(rows);
+    switch (page) {
+    case 1:  return build_rows_bus(rows);
+    case 2:  return build_rows_info(rows);
+    default: return build_rows_status(v, rows, notify_rate);
+    }
+}
+
 static void draw_row(const row_t *r, int y)
 {
     strip_begin(LCD_H_RES, 8, COLOR_BLACK);
@@ -456,6 +621,11 @@ static void draw_counter(int y, const char *label, unsigned long value, uint16_t
     display_push(0, y, LCD_H_RES, 16);
 }
 
+static bool display_shows_counters(const display_view_t *v)
+{
+    return !v->prompt && detail_count == 0 && page == 0;
+}
+
 static void display_draw_view(const display_view_t *v)
 {
     display_clear(COLOR_BLACK);
@@ -474,18 +644,34 @@ static void display_draw_view(const display_view_t *v)
     int status_scale = (text_width(v->status, 2) <= LCD_H_RES - 8) ? 2 : 1;
     display_draw_text(0, STATUS_Y + (status_scale == 2 ? 0 : 4), LCD_H_RES, v->status, v->color, COLOR_BLACK, status_scale, true);
 
-    display_fill_rect(10, TOP_DIVIDER_Y, LCD_H_RES - 20, 1, C_LINE);
-    display_fill_rect(10, BOTTOM_DIVIDER_Y, LCD_H_RES - 20, 1, C_LINE);
-
     // Force every row to redraw
     memset(row_key, 0, sizeof(row_key));
     memset(rx_key, 0, sizeof(rx_key));
     memset(tx_key, 0, sizeof(tx_key));
+
+    if (v->prompt) return;
+
+    display_fill_rect(10, TOP_DIVIDER_Y, LCD_H_RES - 20, 1, C_LINE);
+    if (display_shows_counters(v)) {
+        display_fill_rect(10, BOTTOM_DIVIDER_Y, LCD_H_RES - 20, 1, C_LINE);
+    }
+
+    // Page indicator: one square per page, the current one in the state color
+    if (detail_count == 0) {
+        strip_begin(LCD_H_RES, 6, COLOR_BLACK);
+        int x0 = (LCD_H_RES - (PAGE_COUNT * 6 + (PAGE_COUNT - 1) * 6)) / 2;
+        for (int i = 0; i < PAGE_COUNT; i++) {
+            strip_fill(x0 + i * 12, 0, 6, 6, i == page ? v->color : C_LINE);
+        }
+        display_push(0, LCD_V_RES - 10, LCD_H_RES, 6);
+    }
 }
 
 // Redraw only the rows whose text or color changed
 static void display_update_info(const display_view_t *v, uint32_t notify_rate)
 {
+    if (v->prompt) return;
+
     row_t rows[MAX_ROWS];
     int n = build_rows(v, rows, notify_rate);
 
@@ -501,6 +687,8 @@ static void display_update_info(const display_view_t *v, uint32_t notify_rate)
         }
         y += ROW_PITCH;
     }
+
+    if (!display_shows_counters(v)) return;
 
     unsigned long rx = g_rx_count, tx = g_tx_count;
     char key[32];
@@ -575,6 +763,7 @@ void display_set_mode_view(const char *mode_title, display_icon_t icon, const ch
         strlcpy(view.status, status_str, sizeof(view.status));
         view.icon = icon;
         view.color = state_color;
+        view.prompt = false;
         view_dirty = true;
     taskEXIT_CRITICAL(&state_lock);
     display_wake();
@@ -588,8 +777,13 @@ void display_set_status(const char *transport, const char *status_msg, uint16_t 
     if (strstr(transport, "SAVVY") != NULL || strstr(transport, "USB") != NULL) {
         icon = ICON_USB;
         header_label = "SAVVYCAN";
+    } else if (strstr(transport, "BENCH") != NULL) {
+        header_label = "BENCH SIM";
+    } else if (strstr(transport, "UPDATE") != NULL) {
+        icon = ICON_NONE;
+        header_label = "WIFI UPDATE";
     } else if (strstr(transport, "SIMOS") != NULL || strstr(transport, "ISO-TP") != NULL || strstr(transport, "BLE") != NULL) {
-        header_label = "SIMOS";
+        header_label = bench_mode ? "BENCH SIM" : "SIMOS";
     }
 
     const char *short_status = status_msg;
@@ -600,6 +794,56 @@ void display_set_status(const char *transport, const char *status_msg, uint16_t 
     else if (strstr(status_msg, "REBOOTING") != NULL) short_status = "REBOOT";
 
     display_set_mode_view(header_label, icon, short_status, color);
+}
+
+void display_set_prompt(const char *title, const char *status, uint16_t color)
+{
+    taskENTER_CRITICAL(&state_lock);
+        strlcpy(view.title, title, sizeof(view.title));
+        strlcpy(view.status, status, sizeof(view.status));
+        view.icon = ICON_NONE;
+        view.color = color;
+        view.prompt = true;
+        view_dirty = true;
+    taskEXIT_CRITICAL(&state_lock);
+    display_wake();
+}
+
+void display_next_page(void)
+{
+    page = (page + 1) % PAGE_COUNT;
+    taskENTER_CRITICAL(&state_lock);
+        view_dirty = true;
+    taskEXIT_CRITICAL(&state_lock);
+    display_wake();
+}
+
+void display_set_detail(uint8_t index, const char *label, const char *value)
+{
+    if (index >= MAX_DETAILS) return;
+    taskENTER_CRITICAL(&state_lock);
+        strlcpy(details[index].label, label, sizeof(details[index].label));
+        strlcpy(details[index].value, value, sizeof(details[index].value));
+        if (index >= detail_count) {
+            detail_count = index + 1;
+            view_dirty = true;      // the layout changed
+        }
+    taskEXIT_CRITICAL(&state_lock);
+    display_wake();
+}
+
+void display_clear_details(void)
+{
+    taskENTER_CRITICAL(&state_lock);
+        detail_count = 0;
+        view_dirty = true;
+    taskEXIT_CRITICAL(&state_lock);
+    display_wake();
+}
+
+void display_set_bench(bool bench)
+{
+    bench_mode = bench;
 }
 
 void display_set_ble_info(uint16_t mtu, uint16_t conn_int)

@@ -14,7 +14,11 @@
 typedef enum {
     OP_MODE_SIMOS_BLE = 0,
     OP_MODE_SAVVYCAN_GVRET,
-    OP_MODE_COUNT,
+    OP_MODE_COUNT,                          // modes above are saved and cycled with a long press
+
+    // One-shot modes: selected from the button menu, never saved, gone after the next restart
+    OP_MODE_BENCH_SIM = OP_MODE_COUNT,      // virtual ECU/TCU for testing on the desk
+    OP_MODE_WIFI_UPDATE,                    // Wi-Fi access point for firmware updates
 } dongle_mode_t;
 
 // Global synchronization primitives

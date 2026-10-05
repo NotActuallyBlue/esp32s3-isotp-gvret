@@ -21,6 +21,7 @@
 #include "connection_handler.h"
 #include "isotp_bridge.h"
 #include "display.h"
+#include "bench_sim.h"
 
 #define BRIDGE_TAG                  "Bridge"
 
@@ -44,6 +45,13 @@ int isotp_user_send_can(const uint32_t arbitration_id, const uint8_t* data, cons
 {
     twai_message_t frame = {.identifier = arbitration_id, .data_length_code = size};
     memcpy(frame.data, data, sizeof(frame.data));
+
+    // Bench simulator: frames are exchanged in memory instead of going out on the bus
+    if (bench_sim_active()) {
+        if (!bench_sim_is_response_id(arbitration_id)) g_tx_count++;
+        bench_sim_send_can(arbitration_id, data, size);
+        return ISOTP_RET_OK;
+    }
 
     g_tx_count++;
     PERSIST_LOG_WINDOW(BRIDGE_TAG, "CAN TX -> ID: 0x%03lX, DLC: %d, %02X %02X %02X %02X", (unsigned long)arbitration_id, size,

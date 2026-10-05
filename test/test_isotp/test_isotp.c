@@ -4,7 +4,7 @@
 #include "isotp.h"
 #include "../../main/isotp.c"
 
-#define MAX_SENT 64
+#define MAX_SENT 512
 
 typedef struct {
     uint32_t id;
@@ -286,6 +286,89 @@ void test_oversized_response_is_refused(void)
     TEST_ASSERT_EQUAL_HEX8(0x32, sent[0].data[0]);          // flow control: overflow
 }
 
+
+// ---- two links talking to each other: what the bench simulator does between the dongle and a virtual module ----
+static IsoTpLink    module_link;
+static uint8_t      module_send_buf[1024];
+static uint8_t      module_recv_buf[1024];
+static uint8_t      big_link_send[1024];
+static uint8_t      big_link_recv[1024];
+
+// Deliver every frame sent so far to the link it is addressed to, polling both until nothing is left to do
+static void pump_links(void)
+{
+    int delivered = 0;
+    for (int guard = 0; guard < 20000; guard++) {
+        bool progress = false;
+        while (delivered < sent_count) {
+            sent_frame_t f = sent[delivered++];
+            uint8_t data[8];
+            memcpy(data, f.data, f.len);
+            if (f.id == 0x7E0) isotp_on_can_message(&module_link, data, f.len);
+            else if (f.id == 0x7E8) isotp_on_can_message(&link, data, f.len);
+            progress = true;
+        }
+        isotp_poll(&link);
+        isotp_poll(&module_link);
+        now_us += 200;
+        if (!progress && delivered == sent_count &&
+            link.send_status != ISOTP_SEND_STATUS_INPROGRESS && module_link.send_status != ISOTP_SEND_STATUS_INPROGRESS &&
+            link.receive_status != ISOTP_RECEIVE_STATUS_INPROGRESS && module_link.receive_status != ISOTP_RECEIVE_STATUS_INPROGRESS) {
+            break;
+        }
+    }
+}
+
+void test_request_and_response_between_two_links(void)
+{
+    sent_count = 0;
+    isotp_init_link(&link, 0x7E0, 0x7E8, big_link_send, sizeof(big_link_send), big_link_recv, sizeof(big_link_recv));
+    isotp_init_link(&module_link, 0x7E8, 0x7E0, module_send_buf, sizeof(module_send_buf), module_recv_buf, sizeof(module_recv_buf));
+    link.stmin_override = 1000;                     // the app's 1 ms setting
+
+    uint8_t request[69];
+    make_payload(request, sizeof(request));
+    TEST_ASSERT_EQUAL(ISOTP_RET_OK, isotp_send(&link, request, sizeof(request)));
+    pump_links();
+
+    uint8_t got[1024];
+    uint16_t got_len = 0;
+    TEST_ASSERT_EQUAL(ISOTP_RET_OK, isotp_receive(&module_link, got, sizeof(got), &got_len));
+    TEST_ASSERT_EQUAL(69, got_len);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(request, got, 69);
+
+    uint8_t response[132];
+    for (int i = 0; i < 132; i++) response[i] = (uint8_t)(i * 3);
+    TEST_ASSERT_EQUAL(ISOTP_RET_OK, isotp_send(&module_link, response, sizeof(response)));
+    pump_links();
+
+    TEST_ASSERT_EQUAL(ISOTP_RET_OK, isotp_receive(&link, got, sizeof(got), &got_len));
+    TEST_ASSERT_EQUAL(132, got_len);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(response, got, 132);
+    TEST_ASSERT_EQUAL(ISOTP_PROTOCOL_RESULT_OK, link.send_protocol_result);
+    TEST_ASSERT_EQUAL(ISOTP_PROTOCOL_RESULT_OK, link.receive_protocol_result);
+}
+
+void test_large_exchange_with_block_size_limit(void)
+{
+    sent_count = 0;
+    isotp_init_link(&link, 0x7E0, 0x7E8, big_link_send, sizeof(big_link_send), big_link_recv, sizeof(big_link_recv));
+    isotp_init_link(&module_link, 0x7E8, 0x7E0, module_send_buf, sizeof(module_send_buf), module_recv_buf, sizeof(module_recv_buf));
+    link.default_block_size = 4;                    // we ask the module for a flow control every 4 frames
+    module_link.default_block_size = 4;
+
+    uint8_t request[369];                           // the biggest request seen from Simos Tools
+    make_payload(request, sizeof(request));
+    TEST_ASSERT_EQUAL(ISOTP_RET_OK, isotp_send(&link, request, sizeof(request)));
+    pump_links();
+
+    uint8_t got[1024];
+    uint16_t got_len = 0;
+    TEST_ASSERT_EQUAL(ISOTP_RET_OK, isotp_receive(&module_link, got, sizeof(got), &got_len));
+    TEST_ASSERT_EQUAL(369, got_len);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(request, got, 369);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -301,5 +384,7 @@ int main(void)
     RUN_TEST(test_single_frame_receive);
     RUN_TEST(test_wrong_sequence_number_aborts_receive);
     RUN_TEST(test_oversized_response_is_refused);
+    RUN_TEST(test_request_and_response_between_two_links);
+    RUN_TEST(test_large_exchange_with_block_size_limit);
     return UNITY_END();
 }

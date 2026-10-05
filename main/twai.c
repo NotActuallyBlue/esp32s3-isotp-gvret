@@ -12,6 +12,7 @@
 #include "connection_handler.h"
 #include "twai.h"
 #include "persist.h"
+#include "canstats.h"
 #include "driver/gpio.h"
 
 #define TWAI_TAG        "TWAI"
@@ -166,6 +167,7 @@ void twai_receive_task(void *arg)
         {
             if (twai_receive(&twai_rx_msg, pdMS_TO_TICKS(TIMEOUT_LONG)) == ESP_OK) {
                 ch_take_can_timer_sem();
+                canstats_on_frame(twai_rx_msg.identifier, twai_rx_msg.data_length_code);
         
                 if (twai_rx_msg.identifier < 0x500) {
                     esp_task_wdt_reset();
@@ -203,6 +205,7 @@ void twai_send(twai_message_t *twai_tx_msg)
     // Non-blocking timeout instead of infinite while loop
     esp_err_t err = twai_transmit(twai_tx_msg, pdMS_TO_TICKS(50));
     if (err != ESP_OK) {
+        canstats_on_tx_failure();
         ESP_LOGW(TWAI_TAG, "CAN TX failed (ID: 0x%03lX): %s", (unsigned long)twai_tx_msg->identifier, esp_err_to_name(err));
     }
 }
@@ -220,14 +223,17 @@ void twai_alert_task(void* arg)
 
             if (twai_read_alerts(&alerts, pdMS_TO_TICKS(TIMEOUT_LONG)) == ESP_OK) {
                 if (alerts & TWAI_ALERT_ABOVE_ERR_WARN) {
+                    canstats_on_event(CAN_EVENT_ERROR_WARNING);
                     ESP_LOGW(TWAI_TAG, "Surpassed Error Warning Limit");
                 }
 
                 if (alerts & TWAI_ALERT_ERR_PASS) {
+                    canstats_on_event(CAN_EVENT_ERROR_PASSIVE);
                     ESP_LOGW(TWAI_TAG, "Entered Error Passive state");
                 }
 
                 if (alerts & TWAI_ALERT_BUS_OFF) {
+                    canstats_on_event(CAN_EVENT_BUS_OFF);
                     ESP_LOGE(TWAI_TAG, "Bus Off state detected!");
                     if (xSemaphoreTake(twai_bus_off_mutex, pdMS_TO_TICKS(TIMEOUT_NORMAL)) == pdTRUE) {
                         ESP_LOGW(TWAI_TAG, "Initiate bus recovery");

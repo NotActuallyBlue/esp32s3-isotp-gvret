@@ -22,6 +22,8 @@
 #include "mode_mgr.h"
 #include "gvret.h"
 #include "flashlog.h"
+#include "bench_sim.h"
+#include "ota_update.h"
 #include "esp_app_desc.h"
 #include "esp_ota_ops.h"
 #include "esp_flash.h"
@@ -73,15 +75,22 @@ void app_main(void)
     // Setup FreeRTOS task synchronization
     sync_task_sem = xSemaphoreCreateBinary();
 
-    if (current_mode == OP_MODE_SIMOS_BLE) {
-        ESP_LOGI(MAIN_TAG, "Booting in SIMOS BLE ISO-TP Mode");
+    bool bench = (current_mode == OP_MODE_BENCH_SIM);
+    display_set_bench(bench);
+
+    if (current_mode == OP_MODE_SIMOS_BLE || bench) {
+        if (bench) {
+            ESP_LOGI(MAIN_TAG, "Booting in BENCH SIMULATOR Mode (virtual ECU and TCU, no CAN bus)");
+        } else {
+            ESP_LOGI(MAIN_TAG, "Booting in SIMOS BLE ISO-TP Mode");
+        }
         display_set_status("BLE ISO-TP", "READY", COLOR_CYAN);
 
         // Core hardware & protocol stacks for Simos BLE
         ble_server_init();
         ch_init();
         uart_init();
-        twai_init();
+        if (!bench) twai_init();
         isotp_init();
         persist_init();
 
@@ -101,7 +110,11 @@ void app_main(void)
 
         // Start tasks
         ble_server_start(callbacks);
-        twai_start_task();
+        if (bench) {
+            bench_sim_start();
+        } else {
+            twai_start_task();
+        }
         isotp_start_task();
         persist_start_task();
         uart_start_task();
@@ -109,6 +122,10 @@ void app_main(void)
 
         ESP_LOGI(MAIN_TAG, "Simos BLE services running.");
     } 
+    else if (current_mode == OP_MODE_WIFI_UPDATE) {
+        ESP_LOGI(MAIN_TAG, "Booting in WIFI UPDATE Mode");
+        ota_update_start();
+    }
     else if (current_mode == OP_MODE_SAVVYCAN_GVRET) {
         ESP_LOGI(MAIN_TAG, "Booting in SavvyCAN GVRET Mode");
         display_set_status("SAVVYCAN", "CONNECTING...", COLOR_YELLOW);
