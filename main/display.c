@@ -785,12 +785,16 @@ void display_update_traffic(uint32_t rx_count, uint32_t tx_count)
 void display_set_mode_view(const char *mode_title, display_icon_t icon, const char *status_str, uint16_t state_color)
 {
     taskENTER_CRITICAL(&state_lock);
+        // Repaint only when something shown actually changed, so a caller may set the same status repeatedly
+        bool changed = strncmp(view.title, mode_title, sizeof(view.title) - 1) != 0 ||
+                       strncmp(view.status, status_str, sizeof(view.status) - 1) != 0 ||
+                       view.icon != icon || view.color != state_color || view.prompt;
         strlcpy(view.title, mode_title, sizeof(view.title));
         strlcpy(view.status, status_str, sizeof(view.status));
         view.icon = icon;
         view.color = state_color;
         view.prompt = false;
-        view_dirty = true;
+        if (changed) view_dirty = true;
     taskEXIT_CRITICAL(&state_lock);
     display_wake();
 }
