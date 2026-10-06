@@ -87,7 +87,7 @@ frame-spacing regressions; the engine refuses UDS 0x14 and keeps its history ent
 
 ### Sleep
 
-After 10 minutes with no CAN frames, no connected client and no button press, the ESP32-S3 goes into deep sleep. A frame on the
+After 3 minutes with no CAN frames, no connected client and no button press, the ESP32-S3 goes into deep sleep. A frame on the
 bus (RX line low) or the BOOT button wakes it. It never sleeps while USB is connected, and not in bench or update modes (in SavvyCAN mode only while a client is connected).
 Change the time with the NVS key `sleep_min` in namespace `dongle_cfg` (0 = never).
 

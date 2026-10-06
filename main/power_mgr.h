@@ -12,7 +12,7 @@
 // What this does not cover: the buck converter and the CAN transceiver keep drawing current while the ESP32 sleeps,
 // so measure the whole dongle's draw in sleep before relying on it for weeks of parking.
 
-#define POWER_IDLE_MINUTES_DEFAULT  10      // NVS key "sleep_min" (dongle_cfg) overrides, 0 = never sleep
+#define POWER_IDLE_MINUTES_DEFAULT  3       // NVS key "sleep_min" (dongle_cfg) overrides, 0 = never sleep
 
 // busy() may be NULL. It returns true while a client is connected (BLE or Wi-Fi), which counts as activity.
 typedef bool (*power_busy_fn)(void);

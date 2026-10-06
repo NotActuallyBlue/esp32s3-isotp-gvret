@@ -157,7 +157,7 @@ this while the dongle is in a car.
 
 ## Auto sleep
 
-The OBD-II port has power all the time, so to avoid draining the car's battery the dongle goes into a low-power sleep after **10 minutes**
+The OBD-II port has power all the time, so to avoid draining the car's battery the dongle goes into a low-power sleep after **3 minutes**
 with no CAN traffic, no connected phone or app, and no button presses. Driving the car, connecting an app or pressing BOOT wakes it. It does
 not sleep while connected over USB, or in Bench sim or Wi-Fi update modes. In SavvyCAN mode it sleeps only when no computer is connected.
 
