@@ -11,7 +11,7 @@ screen, and connects to your phone or laptop over Bluetooth, Wi-Fi or USB.
   screen, shows live data and your VIN, and clears codes behind a confirmation step.
 * **Work with generic OBD apps.** ELM327 mode makes the dongle look like a standard ELM327 adapter over Bluetooth LE or Wi-Fi,
   for apps that support those adapters.
-* **Capture CAN traffic on a computer.** A USB mode for SavvyCAN.
+* **Capture CAN traffic on a computer.** SavvyCAN mode streams raw CAN frames over Wi-Fi, so it works with the dongle in the car.
 * **Sleep when the car is off,** and update its own firmware over Wi-Fi.
 
 **Contents:** [What you need](#what-you-need) · [Getting started](#getting-started) · [Choosing a mode](#choosing-a-mode) ·
@@ -41,7 +41,7 @@ Not supported: CAN FD and DoIP (found on the newest cars), K-line, and older car
 4. **Connect your app,** or use the buttons and screen in Diag mode.
 
 Do not connect the dongle to a computer over USB while it is plugged into a car. Use Bluetooth or Wi-Fi in the car. USB is for
-SavvyCAN mode and bench use.
+bench use.
 
 ## Choosing a mode
 
@@ -137,14 +137,24 @@ or Wi-Fi ELM327).
 
 ## SavvyCAN mode
 
-For capturing and analysing CAN traffic on a computer, and meant for bench use. Switch to SavvyCAN mode, connect the dongle to the computer
-over USB, and add it in SavvyCAN as a **GVRET** device (serial, 250000 baud).
+For capturing and analysing raw CAN traffic with [SavvyCAN](https://www.savvycan.com) on a computer, with the dongle in the car.
+
+1. Switch the dongle to SavvyCAN mode.
+2. On your computer, join the Wi-Fi network **ISOTP-SAVVYCAN** (the password is shown on the dongle's screen; it is the same password the ELM327
+   network uses).
+3. In SavvyCAN, add a new device connection of the **network connection (GVRET)** type, with the IP address `192.168.0.10` and port `23`.
+4. Connect. The screen shows the connection status and counts the frames captured and sent.
+
+The dongle reads at 500 kbit/s. Frames you send from SavvyCAN go out on the car's bus, so only send frames you understand.
+
+At a desk you can also connect the dongle to the computer over USB and add it in SavvyCAN as a serial **GVRET** device (250000 baud). Do not do
+this while the dongle is in a car.
 
 ## Auto sleep
 
 The OBD-II port has power all the time, so to avoid draining the car's battery the dongle goes into a low-power sleep after **10 minutes**
 with no CAN traffic, no connected phone or app, and no button presses. Driving the car, connecting an app or pressing BOOT wakes it. It does
-not sleep while connected over USB, or in SavvyCAN, Bench sim or Wi-Fi update modes.
+not sleep while connected over USB, or in Bench sim or Wi-Fi update modes. In SavvyCAN mode it sleeps only when no computer is connected.
 
 Sleep lowers the dongle's power use but does not turn it off completely. **If you leave the car parked for days or weeks, unplug the
 dongle.**
@@ -177,8 +187,8 @@ You can update over Wi-Fi without any cable.
 |---|---|
 | Connection to the car | OBD-II port, CAN at 500 kbit/s (11-bit) |
 | Power | 12 V from the OBD-II port |
-| Wireless | Bluetooth LE and a 2.4 GHz Wi-Fi access point |
-| USB | USB-C, for SavvyCAN mode and bench use |
+| Wireless | Bluetooth LE and a 2.4 GHz Wi-Fi access point (WPA2) |
+| USB | USB-C, for bench use |
 | Display | 1.9 inch colour screen, 170 x 320 |
 | Controls | BOOT and KEY buttons |
 | Modes | Simos, Diag, ELM327, SavvyCAN, plus Bench sim and Wi-Fi update |

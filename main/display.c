@@ -821,8 +821,8 @@ void display_set_status(const char *transport, const char *status_msg, uint16_t 
     const char *header_label = transport;
     
     if (strstr(transport, "SAVVY") != NULL || strstr(transport, "USB") != NULL) {
-        icon = ICON_USB;
-        header_label = "SAVVYCAN";
+        icon = ICON_NONE;
+        header_label = bench_mode ? "BENCH SAVVY" : "SAVVYCAN";
     } else if (strstr(transport, "BENCH") != NULL) {
         header_label = "BENCH SIM";
     } else if (strstr(transport, "UPDATE") != NULL) {

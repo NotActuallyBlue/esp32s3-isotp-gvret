@@ -3,193 +3,323 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "driver/twai.h"
-#include "esp_timer.h"
 #include "driver/usb_serial_jtag.h"
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "constants.h"
 #include "display.h"
+#include "canstats.h"
+#include "bench_sim.h"
+#include "elm_transport.h"
 
-#define TAG "GVRET"
+#define GVRET_TAG       "GVRET"
+#define GVRET_SSID      "ISOTP-SAVVYCAN"
+#define GVRET_PORT      23              // the port SavvyCAN's "Network connection (GVRET)" uses by default
+#define BATCH_SIZE      1024
 
 // Protocol command bytes
 #define PROTO_BUILD_CAN_FRAME    0   // 0x00
 #define PROTO_TIME_SYNC          1   // 0x01
-#define PROTO_DIG_INPUTS         2   // 0x02
-#define PROTO_ANA_INPUTS         3   // 0x03
-#define PROTO_SET_DIG_OUT        4   // 0x04
-#define PROTO_SET_CONFIG         5   // 0x05
 #define PROTO_GET_CANBUS_PARAMS  6   // 0x06
 #define PROTO_GET_DEV_INFO       7   // 0x07
-#define PROTO_SET_BAUD_0         8   // 0x08
 #define PROTO_GET_EXT_BUSES      9   // 0x09
-#define PROTO_SET_EXT_BUSES      10  // 0x0A
 #define PROTO_GET_NUM_BUSES      12  // 0x0C
 #define PROTO_GET_NUM_BUSES_EXT  13  // 0x0D
 
-// Forward frames from vehicle/CAN bus to USB (SavvyCAN)
-static void gvret_send_frame(const twai_message_t *frame)
+typedef struct {
+    uint32_t    id;
+    uint8_t     len;
+    uint8_t     data[8];
+} bench_frame_t;
+
+static bool             bench_mode;
+static QueueHandle_t    bench_queue;
+
+// ---------------------------------------------------------------- output
+// USB is only written while a computer is actually attached: with nothing attached every write would wait for its timeout
+// and stall the capture.
+static void write_usb(const uint8_t *data, size_t len)
 {
-    uint8_t buffer[16];
-    uint32_t now = (uint32_t)(esp_timer_get_time());
-
-    buffer[0] = 0xF1;
-    buffer[1] = PROTO_BUILD_CAN_FRAME;
-    buffer[2] = (uint8_t)(now & 0xFF);
-    buffer[3] = (uint8_t)((now >> 8) & 0xFF);
-    buffer[4] = (uint8_t)((now >> 16) & 0xFF);
-    buffer[5] = (uint8_t)((now >> 24) & 0xFF);
-
-    uint32_t id = frame->identifier;
-    if (frame->extd) {
-        id |= (1UL << 31);
+    if (usb_serial_jtag_is_connected()) {
+        usb_serial_jtag_write_bytes(data, len, pdMS_TO_TICKS(20));
     }
-    buffer[6] = (uint8_t)(id & 0xFF);
-    buffer[7] = (uint8_t)((id >> 8) & 0xFF);
-    buffer[8] = (uint8_t)((id >> 16) & 0xFF);
-    buffer[9] = (uint8_t)((id >> 24) & 0xFF);
-
-    buffer[10] = frame->data_length_code & 0x0F;
-    memcpy(&buffer[11], frame->data, frame->data_length_code);
-
-    usb_serial_jtag_write_bytes(buffer, 11 + frame->data_length_code, pdMS_TO_TICKS(10));
 }
 
-// Background task: Listen for incoming CAN frames and pump to USB
-static void gvret_rx_can_task(void *pvParameters)
+static void write_net(const uint8_t *data, size_t len)
 {
-    twai_message_t rx_frame;
+    elm_wifi_send(data, len);
+}
+
+static void write_all(const uint8_t *data, size_t len)
+{
+    write_usb(data, len);
+    write_net(data, len);
+}
+
+// ---------------------------------------------------------------- CAN access
+static void can_transmit(uint32_t id, bool extended, uint8_t dlc, const uint8_t *data)
+{
+    g_tx_count++;
+    if (bench_mode) {
+        bench_sim_send_can(id, data, dlc);
+        return;
+    }
+    twai_message_t frame = { 0 };
+    frame.extd = extended;
+    frame.identifier = extended ? id : (id & 0x7FF);
+    frame.data_length_code = dlc;
+    memcpy(frame.data, data, dlc);
+    twai_transmit(&frame, pdMS_TO_TICKS(10));
+}
+
+static void bench_sink(uint32_t id, const uint8_t *data, uint16_t len)
+{
+    bench_frame_t f = { .id = id, .len = (uint8_t)(len > 8 ? 8 : len) };
+    memcpy(f.data, data, f.len);
+    xQueueSend(bench_queue, &f, 0);
+}
+
+static bool receive_frame(twai_message_t *out, TickType_t wait)
+{
+    if (bench_mode) {
+        bench_frame_t f;
+        if (xQueueReceive(bench_queue, &f, wait) != pdTRUE) return false;
+        memset(out, 0, sizeof(*out));
+        out->identifier = f.id;
+        out->data_length_code = f.len;
+        memcpy(out->data, f.data, f.len);
+        return true;
+    }
+    return twai_receive(out, wait) == ESP_OK;
+}
+
+// One captured frame in GVRET format. Returns the number of bytes written.
+static size_t pack_frame(const twai_message_t *frame, uint8_t *out)
+{
+    uint32_t now = (uint32_t)esp_timer_get_time();
+    uint32_t id = frame->identifier | (frame->extd ? (1UL << 31) : 0);
+    uint8_t dlc = frame->data_length_code & 0x0F;
+    if (dlc > 8) dlc = 8;
+
+    out[0] = 0xF1;
+    out[1] = PROTO_BUILD_CAN_FRAME;
+    out[2] = now & 0xFF; out[3] = (now >> 8) & 0xFF; out[4] = (now >> 16) & 0xFF; out[5] = (now >> 24) & 0xFF;
+    out[6] = id & 0xFF; out[7] = (id >> 8) & 0xFF; out[8] = (id >> 16) & 0xFF; out[9] = (id >> 24) & 0xFF;
+    out[10] = dlc;
+    memcpy(&out[11], frame->data, dlc);
+    return 11 + dlc;
+}
+
+// Frames from the bus go to every connected client, several at a time so Wi-Fi is not asked for one packet per frame
+static void gvret_rx_can_task(void *arg)
+{
+    uint8_t batch[BATCH_SIZE];
+    size_t used = 0;
+
     while (1) {
-        if (twai_receive(&rx_frame, pdMS_TO_TICKS(50)) == ESP_OK) {
-            // Track incoming traffic from vehicle CAN bus
+        twai_message_t frame;
+        if (receive_frame(&frame, used ? 0 : pdMS_TO_TICKS(20))) {
             g_rx_count++;
-            gvret_send_frame(&rx_frame);
+            canstats_on_frame(frame.identifier, frame.data_length_code);
+            used += pack_frame(&frame, batch + used);
+            if (used + 20 < sizeof(batch)) continue;
+        }
+        if (used) {
+            write_all(batch, used);
+            used = 0;
         }
     }
 }
 
-// Background task: Handle SavvyCAN USB commands, keepalives, and transmit requests
-static void gvret_comm_task(void *pvParameters)
+// ---------------------------------------------------------------- command parser
+// Works byte by byte, so a command split across two reads (normal over TCP) is still understood.
+typedef enum { ST_IDLE, ST_CMD, ST_FRAME } parse_state_t;
+
+typedef struct {
+    parse_state_t   state;
+    uint8_t         buf[16];
+    int             have;
+    int             need;
+    void          (*write)(const uint8_t *data, size_t len);
+} parser_t;
+
+static void put_u32(uint8_t *out, uint32_t v)
+{
+    out[0] = v & 0xFF; out[1] = (v >> 8) & 0xFF; out[2] = (v >> 16) & 0xFF; out[3] = (v >> 24) & 0xFF;
+}
+
+static void handle_command(parser_t *p, uint8_t cmd)
+{
+    switch (cmd) {
+    case PROTO_GET_NUM_BUSES: {
+        const uint8_t resp[] = { 0xF1, PROTO_GET_NUM_BUSES, 1 };
+        p->write(resp, sizeof(resp));
+        break;
+    }
+    case PROTO_GET_NUM_BUSES_EXT: {
+        const uint8_t resp[] = { 0xF1, PROTO_GET_NUM_BUSES_EXT, 0 };
+        p->write(resp, sizeof(resp));
+        break;
+    }
+    case PROTO_GET_DEV_INFO: {
+        const uint8_t resp[] = { 0xF1, PROTO_GET_DEV_INFO, 0x20, 0x01, 0x00, 0x00 };
+        p->write(resp, sizeof(resp));
+        break;
+    }
+    case PROTO_GET_CANBUS_PARAMS: {
+        const uint8_t resp[] = { 0xF1, PROTO_GET_CANBUS_PARAMS, 0x01, 0x20, 0xA1, 0x07, 0x00 };   // bus 0 active, 500000 baud
+        p->write(resp, sizeof(resp));
+        break;
+    }
+    case PROTO_GET_EXT_BUSES: {                 // also used as the keepalive ping
+        const uint8_t resp[] = { 0xF1, PROTO_GET_EXT_BUSES, 0x01, 0x00, 0x00, 0x00 };
+        p->write(resp, sizeof(resp));
+        break;
+    }
+    case PROTO_TIME_SYNC: {
+        uint8_t resp[6] = { 0xF1, PROTO_TIME_SYNC };
+        put_u32(resp + 2, (uint32_t)esp_timer_get_time());
+        p->write(resp, sizeof(resp));
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+static void parser_feed(parser_t *p, const uint8_t *data, size_t len)
+{
+    for (size_t i = 0; i < len; i++) {
+        uint8_t b = data[i];
+        switch (p->state) {
+        case ST_IDLE:
+            if (b == 0xF1) p->state = ST_CMD;           // anything else (0xE7 filler, checksums) is skipped
+            break;
+
+        case ST_CMD:
+            if (b == PROTO_BUILD_CAN_FRAME) {
+                p->state = ST_FRAME;
+                p->have = 0;
+                p->need = 6;                            // id (4), bus (1), length (1), then the data
+            } else {
+                handle_command(p, b);
+                p->state = ST_IDLE;
+            }
+            break;
+
+        case ST_FRAME:
+            p->buf[p->have++] = b;
+            if (p->have == 6) {
+                uint8_t dlc = p->buf[5] & 0x0F;
+                p->need = 6 + (dlc > 8 ? 8 : dlc);
+            }
+            if (p->have >= p->need) {
+                uint32_t id = (uint32_t)p->buf[0] | ((uint32_t)p->buf[1] << 8) | ((uint32_t)p->buf[2] << 16) | ((uint32_t)p->buf[3] << 24);
+                uint8_t dlc = p->buf[5] & 0x0F;
+                if (dlc > 8) dlc = 8;
+                bool extended = (id & (1UL << 31)) != 0;
+                can_transmit(id & ~(1UL << 31), extended, dlc, &p->buf[6]);
+                p->state = ST_IDLE;
+            }
+            break;
+        }
+    }
+}
+
+static parser_t usb_parser = { .state = ST_IDLE, .write = write_usb };
+static parser_t net_parser = { .state = ST_IDLE, .write = write_net };
+
+// Wi-Fi client sent bytes (runs in the TCP server task)
+static void on_net_rx(const uint8_t *data, size_t len)
+{
+    parser_feed(&net_parser, data, len);
+}
+
+static void on_net_link(bool up)
+{
+    net_parser.state = ST_IDLE;
+    ESP_LOGI(GVRET_TAG, "SavvyCAN %s over Wi-Fi", up ? "connected" : "disconnected");
+}
+
+static void gvret_usb_task(void *arg)
 {
     uint8_t rx_buf[128];
-
     while (1) {
         int len = usb_serial_jtag_read_bytes(rx_buf, sizeof(rx_buf), pdMS_TO_TICKS(20));
-        if (len > 0) {
-            for (int i = 0; i < len; i++) {
-                uint8_t b = rx_buf[i];
-
-                if (b == 0xE7) {
-                    continue;
-                }
-
-                if (b == 0xF1 && (i + 1 < len)) {
-                    uint8_t cmd = rx_buf[++i];
-
-                    switch (cmd) {
-                        case PROTO_BUILD_CAN_FRAME: { // 0x00: Transmit frame from SavvyCAN to vehicle
-                            if (i + 6 < len) {
-                                twai_message_t tx_frame = {0};
-                                uint32_t id = (uint32_t)rx_buf[i + 1] |
-                                              ((uint32_t)rx_buf[i + 2] << 8) |
-                                              ((uint32_t)rx_buf[i + 3] << 16) |
-                                              ((uint32_t)rx_buf[i + 4] << 24);
-
-                                if (id & (1UL << 31)) {
-                                    tx_frame.extd = 1;
-                                    tx_frame.identifier = id & ~(1UL << 31);
-                                } else {
-                                    tx_frame.extd = 0;
-                                    tx_frame.identifier = id & 0x7FF;
-                                }
-
-                                uint8_t dlc = rx_buf[i + 6] & 0x0F;
-                                if (dlc > 8) dlc = 8;
-                                tx_frame.data_length_code = dlc;
-
-                                if (i + 6 + dlc < len) {
-                                    memcpy(tx_frame.data, &rx_buf[i + 7], dlc);
-                                    twai_transmit(&tx_frame, pdMS_TO_TICKS(10));
-                                    
-                                    // Track outgoing traffic sent to vehicle CAN bus
-                                    g_tx_count++;
-
-                                    i += (6 + dlc); // Advance pointer past payload
-                                }
-                            }
-                            break;
-                        }
-
-                        case PROTO_GET_NUM_BUSES: { // 0x0C: Number of standard buses
-                            const uint8_t resp[] = {0xF1, PROTO_GET_NUM_BUSES, 1};
-                            usb_serial_jtag_write_bytes(resp, sizeof(resp), pdMS_TO_TICKS(20));
-                            break;
-                        }
-
-                        case PROTO_GET_NUM_BUSES_EXT: { // 0x0D: Number of extended buses
-                            const uint8_t resp[] = {0xF1, PROTO_GET_NUM_BUSES_EXT, 0};
-                            usb_serial_jtag_write_bytes(resp, sizeof(resp), pdMS_TO_TICKS(20));
-                            break;
-                        }
-
-                        case PROTO_GET_DEV_INFO: { // 0x07: Device Info
-                            const uint8_t resp[] = {0xF1, PROTO_GET_DEV_INFO, 0x20, 0x01, 0x00, 0x00};
-                            usb_serial_jtag_write_bytes(resp, sizeof(resp), pdMS_TO_TICKS(20));
-                            break;
-                        }
-
-                        case PROTO_GET_CANBUS_PARAMS: { // 0x06: Standard bus params
-                            const uint8_t resp[] = {
-                                0xF1, PROTO_GET_CANBUS_PARAMS,
-                                0x01,                // Bus 0 active, listen-only off
-                                0x20, 0xA1, 0x07, 0x00  // 500,000 baud (little-endian uint32)
-                            };
-                            usb_serial_jtag_write_bytes(resp, sizeof(resp), pdMS_TO_TICKS(20));
-                            break;
-                        }
-
-                        case PROTO_GET_EXT_BUSES: { // 0x09: Keepalive ping / ext bus descriptor
-                            const uint8_t resp[] = {
-                                0xF1, PROTO_GET_EXT_BUSES, 
-                                0x01, // Bus 0 exists
-                                0x00, // Standard CAN
-                                0x00, 
-                                0x00
-                            };
-                            usb_serial_jtag_write_bytes(resp, sizeof(resp), pdMS_TO_TICKS(20));
-                            break;
-                        }
-
-                        case PROTO_TIME_SYNC: { // 0x01: Microsecond clock synchronization
-                            uint32_t now = (uint32_t)esp_timer_get_time();
-                            uint8_t resp[6];
-                            resp[0] = 0xF1;
-                            resp[1] = PROTO_TIME_SYNC;
-                            resp[2] = (uint8_t)(now & 0xFF);
-                            resp[3] = (uint8_t)((now >> 8) & 0xFF);
-                            resp[4] = (uint8_t)((now >> 16) & 0xFF);
-                            resp[5] = (uint8_t)((now >> 24) & 0xFF);
-                            usb_serial_jtag_write_bytes(resp, sizeof(resp), pdMS_TO_TICKS(20));
-                            break;
-                        }
-
-                        default:
-                            break;
-                    }
-                }
-            }
-        }
+        if (len > 0) parser_feed(&usb_parser, rx_buf, len);
     }
 }
 
-void gvret_start(void)
+// ---------------------------------------------------------------- screen
+static const char *can_state_text(uint16_t *color)
 {
-    display_set_status("SAVVYCAN", "READY", COLOR_GREEN);
+    twai_status_info_t st;
+    *color = COLOR_WHITE;
+    if (bench_mode || twai_get_status_info(&st) != ESP_OK) return "simulated";
+    if (st.state == TWAI_STATE_BUS_OFF || st.state == TWAI_STATE_RECOVERING) { *color = COLOR_RED; return "BUS OFF"; }
+    if (st.tx_error_counter >= 128 || st.rx_error_counter >= 128) { *color = COLOR_ORANGE; return "ERROR PASSIVE"; }
+    *color = COLOR_GREEN;
+    return "OK";
+}
 
+static void gvret_screen_task(void *arg)
+{
+    while (1) {
+        char rx[16], tx[16];
+        snprintf(rx, sizeof(rx), "%lu", (unsigned long)g_rx_count);
+        snprintf(tx, sizeof(tx), "%lu", (unsigned long)g_tx_count);
+        bool net = elm_wifi_connected();
+        bool usb = usb_serial_jtag_is_connected();
+        char port[8];
+        snprintf(port, sizeof(port), "%d", elm_wifi_port());
+        uint16_t state_color;
+        const char *state = can_state_text(&state_color);
+
+        display_detail_t d[] = {
+            { "#WI-FI",    "",                            COLOR_CYAN },
+            { "NETWORK",   elm_wifi_ssid(),               COLOR_WHITE },
+            { "PASSWORD",  elm_wifi_password(),           COLOR_YELLOW },
+            { "IP",        ELM_WIFI_IP,                   COLOR_WHITE },
+            { "PORT",      port,                          COLOR_WHITE },
+            { "#CAPTURE",  "",                            COLOR_CYAN },
+            { "CLIENT",    net ? "Wi-Fi" : (usb ? "USB" : "none"), (net || usb) ? COLOR_GREEN : COLOR_LIGHTGREY },
+            { "FRAMES RX", rx,                            COLOR_WHITE },
+            { "FRAMES TX", tx,                            COLOR_WHITE },
+            { "CAN BUS",   state,                         state_color },
+        };
+        display_set_details("SAVVYCAN", COLOR_CYAN, d, sizeof(d) / sizeof(d[0]));
+        display_set_status("SAVVYCAN", (net || usb) ? "CONNECTED" : "READY", (net || usb) ? COLOR_GREEN : COLOR_CYAN);
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
+
+bool gvret_client_connected(void)
+{
+    return elm_wifi_connected() || usb_serial_jtag_is_connected();
+}
+
+void gvret_start(bool bench)
+{
+    bench_mode = bench;
+    if (bench) {
+        bench_queue = xQueueCreate(64, sizeof(bench_frame_t));
+        bench_sim_set_sink(bench_sink);
+        bench_sim_start();
+    }
+
+    // USB stays available for bench use with SavvyCAN
     usb_serial_jtag_driver_config_t usb_cfg = {
         .tx_buffer_size = 2048,
         .rx_buffer_size = 2048,
     };
     usb_serial_jtag_driver_install(&usb_cfg);
 
+    elm_wifi_start_ex(GVRET_SSID, GVRET_PORT, on_net_rx, on_net_link);
+
     xTaskCreate(gvret_rx_can_task, "gvret_can_rx", 4096, NULL, 5, NULL);
-    xTaskCreate(gvret_comm_task,    "gvret_comm",    4096, NULL, 5, NULL);
+    xTaskCreate(gvret_usb_task,    "gvret_usb",    4096, NULL, 4, NULL);
+    xTaskCreate(gvret_screen_task, "gvret_screen", 4096, NULL, 1, NULL);
+    ESP_LOGI(GVRET_TAG, "SavvyCAN (GVRET) ready: Wi-Fi '%s' port %d, or USB", GVRET_SSID, GVRET_PORT);
 }

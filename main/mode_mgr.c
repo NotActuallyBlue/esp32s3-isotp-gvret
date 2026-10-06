@@ -46,7 +46,7 @@ static const char* get_mode_name(dongle_mode_t mode)
 {
     switch (mode) {
         case OP_MODE_SIMOS_BLE:      return "SIMOS BLE";
-        case OP_MODE_SAVVYCAN_GVRET: return "SAVVYCAN USB";
+        case OP_MODE_SAVVYCAN_GVRET: return "SAVVYCAN";
         case OP_MODE_DIAG:           return "DIAG";
         case OP_MODE_ELM327:         return "ELM327";
         case OP_MODE_BENCH_SIM:      return "BENCH SIM";
@@ -201,7 +201,6 @@ void mode_mgr_init(void)
 #ifdef FORCE_MODE
     current_mode = (dongle_mode_t)FORCE_MODE;   // test builds only: -DFORCE_MODE=2 (diag) or 3 (ELM327), not saved
 #endif
-    if (bench_boot && current_mode == OP_MODE_SAVVYCAN_GVRET) current_mode = OP_MODE_SIMOS_BLE;
 #ifdef FORCE_WIFI_UPDATE
     current_mode = OP_MODE_WIFI_UPDATE;    // test builds only, see FORCE_BENCH_SIM
 #endif

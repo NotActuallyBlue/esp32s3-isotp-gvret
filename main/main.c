@@ -147,15 +147,16 @@ void app_main(void)
         ota_update_start();
     }
     else if (current_mode == OP_MODE_SAVVYCAN_GVRET) {
-        ESP_LOGI(MAIN_TAG, "Booting in SavvyCAN GVRET Mode");
-        display_set_status("SAVVYCAN", "CONNECTING...", COLOR_YELLOW);
+        ESP_LOGI(MAIN_TAG, "Booting in SavvyCAN GVRET Mode%s", bench ? " (bench simulator)" : "");
+        display_set_status("SAVVYCAN", "READY", COLOR_CYAN);
 
-        // Hardware initialization for raw bus sniffing
-        twai_init();
-        twai_start_task();
-
-        // Start GVRET USB bridge engine
-        gvret_start();
+        // The GVRET task is the only reader of CAN frames here, so the receive task of the Simos bridge is not started
+        if (!bench) {
+            twai_init();
+            twai_start_raw();
+        }
+        gvret_start(bench);
+        if (!bench) power_mgr_start(gvret_client_connected);
 
         ESP_LOGI(MAIN_TAG, "SavvyCAN GVRET services running.");
     }

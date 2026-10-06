@@ -20,13 +20,16 @@
 #define NVS_KEY_PASS    "elm_wifi_pw"
 
 static char                 password[12];
+static const char          *ap_ssid = ELM_WIFI_SSID;
+static int                  tcp_port = ELM_WIFI_PORT;
 static int                  client_fd = -1;
 static SemaphoreHandle_t    client_mutex;
 static elm_rx_cb            rx_cb;
 static elm_link_cb          link_cb;
 
 bool elm_wifi_connected(void) { return client_fd >= 0; }
-const char *elm_wifi_ssid(void) { return ELM_WIFI_SSID; }
+const char *elm_wifi_ssid(void) { return ap_ssid; }
+int         elm_wifi_port(void) { return tcp_port; }
 const char *elm_wifi_password(void) { return password; }
 
 // Created on first use and kept, so the phone can remember the network. No look-alike characters.
@@ -76,13 +79,13 @@ static void server_task(void *arg)
     int listener = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
     int yes = 1;
     setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-    struct sockaddr_in addr = { .sin_family = AF_INET, .sin_port = htons(ELM_WIFI_PORT), .sin_addr.s_addr = htonl(INADDR_ANY) };
+    struct sockaddr_in addr = { .sin_family = AF_INET, .sin_port = htons(tcp_port), .sin_addr.s_addr = htonl(INADDR_ANY) };
     if (bind(listener, (struct sockaddr *)&addr, sizeof(addr)) != 0 || listen(listener, 1) != 0) {
-        ESP_LOGE(WIFI_TAG, "Cannot listen on port %d (errno %d)", ELM_WIFI_PORT, errno);
+        ESP_LOGE(WIFI_TAG, "Cannot listen on port %d (errno %d)", tcp_port, errno);
         vTaskDelete(NULL);
         return;
     }
-    ESP_LOGI(WIFI_TAG, "Listening on %s:%d", ELM_WIFI_IP, ELM_WIFI_PORT);
+    ESP_LOGI(WIFI_TAG, "Listening on %s:%d", ELM_WIFI_IP, tcp_port);
 
     while (1) {
         int fd = accept(listener, NULL, NULL);
@@ -117,6 +120,13 @@ static void server_task(void *arg)
 
 void elm_wifi_start(elm_rx_cb rx, elm_link_cb link)
 {
+    elm_wifi_start_ex(ELM_WIFI_SSID, ELM_WIFI_PORT, rx, link);
+}
+
+void elm_wifi_start_ex(const char *ssid, int port, elm_rx_cb rx, elm_link_cb link)
+{
+    ap_ssid = ssid;
+    tcp_port = port;
     rx_cb = rx;
     link_cb = link;
     client_mutex = xSemaphoreCreateMutex();
@@ -138,8 +148,8 @@ void elm_wifi_start(elm_rx_cb rx, elm_link_cb link)
     wifi_init_config_t init_cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&init_cfg));
     wifi_config_t ap_cfg = { 0 };
-    strlcpy((char *)ap_cfg.ap.ssid, ELM_WIFI_SSID, sizeof(ap_cfg.ap.ssid));
-    ap_cfg.ap.ssid_len = strlen(ELM_WIFI_SSID);
+    strlcpy((char *)ap_cfg.ap.ssid, ap_ssid, sizeof(ap_cfg.ap.ssid));
+    ap_cfg.ap.ssid_len = strlen(ap_ssid);
     strlcpy((char *)ap_cfg.ap.password, password, sizeof(ap_cfg.ap.password));
     ap_cfg.ap.channel = 6;
     ap_cfg.ap.max_connection = 2;
@@ -152,5 +162,5 @@ void elm_wifi_start(elm_rx_cb rx, elm_link_cb link)
     ESP_LOGW(WIFI_TAG, "TEST BUILD: Wi-Fi password is %s", password);     // never in release builds
 #endif
     xTaskCreate(server_task, "elm_tcp", 4096, NULL, 2, NULL);
-    ESP_LOGI(WIFI_TAG, "Access point '%s' started", ELM_WIFI_SSID);
+    ESP_LOGI(WIFI_TAG, "Access point '%s' started", ap_ssid);
 }

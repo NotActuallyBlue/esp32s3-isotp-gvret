@@ -8,9 +8,8 @@ Notes for people building, testing or changing the firmware. The user guide is i
   tied to ground so it is always in normal mode.
 * CAN at **500 kbit/s**, ESP32-S3 TWAI controller: **GPIO17 = TX, GPIO18 = RX**.
 * Buttons: **BOOT** (GPIO0) and **KEY** (GPIO14).
-* OBD-II connector: CAN-H pin 6, CAN-L pin 14, ground pin 4/5, battery +12 V pin 16 (always live) through a buck converter
-  down to 5 V. A prototype power stage is not an automotive one: for more than a prototype, use proper reverse-polarity and
-  load-dump protection.
+* OBD-II connector: CAN-H pin 6, CAN-L pin 14, ground pin 4/5, battery +12 V pin 16 (always live), powered through a
+  DFRobot DFR0571 buck converter (5 V) with a resistor and capacitor on its input.
 
 ## Building
 
@@ -19,7 +18,8 @@ pio run -t upload            # build and flash over USB (PlatformIO, ESP-IDF 6.1
 pio test -e native           # host-side unit tests
 ```
 
-Never connect USB while the dongle is plugged into a car. Update over Wi-Fi, and read the log at the desk.
+Never connect USB while the dongle is plugged into a car. Update over Wi-Fi, capture with SavvyCAN over Wi-Fi, and read the log at
+the desk.
 
 ## How the modes are built
 
@@ -31,6 +31,11 @@ Never connect USB while the dongle is plugged into a car. Update over Wi-Fi, and
 | **ELM327** | ELM327 emulation over BLE (`ISOTP-ELM327`) and Wi-Fi (`192.168.0.10:35000`) | saved |
 | **Bench sim** | The saved mode (Simos BLE, Diag or ELM327) against virtual modules instead of a car | one-shot |
 | **Wi-Fi update** | Access point and upload page for firmware updates | one-shot |
+
+SavvyCAN mode streams GVRET over a TCP server on port 23 of the dongle's own access point (`ISOTP-SAVVYCAN`, 192.168.0.10, same
+WPA2 password as ELM327), and over USB serial for bench use. It is the only reader of CAN frames in that mode (the Simos receive
+task is not started), writes to USB only while a host is attached, and batches frames per Wi-Fi packet. The command parser is a
+byte-wise state machine, so commands and frames split across TCP segments work. SavvyCAN mode also runs under the bench simulator.
 
 One-shot modes are never saved (RTC memory request, valid only after a software restart): after any power cycle the dongle is
 back in its saved mode.
@@ -81,7 +86,7 @@ frame-spacing regressions; the engine refuses UDS 0x14 and keeps its history ent
 ### Sleep
 
 After 10 minutes with no CAN frames, no connected client and no button press, the ESP32-S3 goes into deep sleep. A frame on the
-bus (RX line low) or the BOOT button wakes it. It never sleeps while USB is connected, and not in SavvyCAN, bench or update modes.
+bus (RX line low) or the BOOT button wakes it. It never sleeps while USB is connected, and not in bench or update modes (in SavvyCAN mode only while a client is connected).
 Change the time with the NVS key `sleep_min` in namespace `dongle_cfg` (0 = never).
 
 Only the ESP32-S3 sleeps. The buck converter and the CAN transceiver keep drawing current, so measure the whole dongle in sleep
@@ -123,7 +128,8 @@ Per-frame lines are limited to a fixed budget per boot after the first PID is re
 * **Over BLE from a desktop** (needs `pip install bleak` and a Bluetooth adapter): `python3 tools/ble_probe.py all` speaks the
   Simos protocol like the apps do (handshake, settings, single and multi-frame and 69-byte requests, split packets, persist
   streaming and the "create PID" timing check), and `python3 tools/elm_probe.py ble` (or `tcp` after joining the dongle's
-  Wi-Fi) runs an ELM327 session like a phone app would. Put the dongle in bench mode first.
+  Wi-Fi) runs an ELM327 session like a phone app would, and `python3 tools/gvret_probe.py` runs a SavvyCAN (GVRET) session over
+  Wi-Fi. Put the dongle in bench mode first.
 * **Test builds**, set with `PLATFORMIO_BUILD_FLAGS` (never use these in a car, flash the normal build afterwards):
   `-DFORCE_BENCH_SIM`, `-DFORCE_WIFI_UPDATE`, `-DFORCE_MODE=2` (Diag) or `=3` (ELM327) without saving, `-DDIAG_SELFTEST` (Diag
   drives its own screens and logs the result), `-DELM_LOG_PASSWORD`, and `-DPOWER_TEST=40` (sleep after 40 s with USB ignored,
@@ -142,7 +148,8 @@ Per-frame lines are limited to a fixed budget per boot after the first PID is re
 | `main/bench_sim.c` | virtual ECU, TCU, gateway and ABS |
 | `main/display.c` | single-task renderer (strips, pages, detail rows) |
 | `main/flashlog.c` | rotating flash log, crash summary |
-| `main/ota_update.c`, `power_mgr.c`, `gvret.c` | Wi-Fi update, deep sleep, SavvyCAN |
+| `main/ota_update.c`, `power_mgr.c` | Wi-Fi update, deep sleep |
+| `main/gvret.c` | SavvyCAN (GVRET) over Wi-Fi and USB |
 | `tools/` | log reader, OTA uploader, BLE and ELM327 probes |
 | `test/` | host-side unit tests |
 
@@ -161,6 +168,7 @@ What has been checked, and how.
 | Simos BLE, key on / engine off (the state needed for flashing) | Works: Simos Tools pulled ECU info over the dongle on a 2017 Mk7 GTI |
 | Diag scan, live data and vehicle info | Works on a 2017 Mk7 GTI, key on / engine off: 16 modules found, VIN, live data and stored codes correct |
 | Diag clear codes | Cleared 12 of 16 modules on the same car. The engine and transmission refuse every clear (UDS 0x14 in either session: "service not supported"; mode 04: "conditions not correct", because OBD-II lists no codes for them); the two engine entries were `HIST` only. The ABS module (0x713) did not answer the clear. Not tried yet on a car with real stored engine codes |
+| SavvyCAN over Wi-Fi | Tested on the bench with the simulator and `tools/gvret_probe.py` (9 checks); not yet tried with SavvyCAN itself or on a real bus |
 | ELM327, sleep, Wi-Fi update | Tested on the bench, against the simulator and desktop test tools. Screens and buttons checked by hand on the bench |
 | ELM327 against a real car, and with real phone apps | Not yet verified |
 | Wake from deep sleep by the BOOT button or the CAN bus | Not yet verified (a timer wake is) |

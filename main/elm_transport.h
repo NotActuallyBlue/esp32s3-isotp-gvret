@@ -21,6 +21,9 @@ uint16_t elm_ble_mtu(void);
 
 // Wi-Fi access point + TCP server. The password is generated once and kept in NVS; it is shown on the screen.
 void        elm_wifi_start(elm_rx_cb rx, elm_link_cb link);
+// Same access point and TCP server under another network name and port (SavvyCAN mode uses this)
+void        elm_wifi_start_ex(const char *ssid, int port, elm_rx_cb rx, elm_link_cb link);
+int         elm_wifi_port(void);
 void        elm_wifi_send(const uint8_t *data, size_t len);
 bool        elm_wifi_connected(void);
 const char *elm_wifi_ssid(void);
