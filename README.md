@@ -147,6 +147,11 @@ For capturing and analysing raw CAN traffic with [SavvyCAN](https://www.savvycan
 
 The dongle reads at 500 kbit/s. Frames you send from SavvyCAN go out on the car's bus, so only send frames you understand.
 
+**What you will see on the car.** Many modern cars (VW, Audi and others) put a gateway module between the OBD-II port and the car's internal
+networks. Through the port you normally see only diagnostic traffic: the replies to requests you send, plus a few status messages. Everyday
+broadcast data such as RPM or wheel speed is not forwarded, so a capture on a plain OBD-II connection can look nearly empty. To see that
+data you either request it from a module by its address, or connect to the car's network behind the gateway.
+
 **Try it without a car.** Power the dongle from any USB port or charger, hold BOOT for about 7 seconds with SavvyCAN as your mode and release on
 **Bench sim**, and connect as above over Wi-Fi. SavvyCAN then shows three test messages that repeat (IDs `0x100` every 10 ms, `0x200` every
 20 ms and `0x300` every 100 ms), and the simulated control units answer requests: for example, send ID `0x7DF` with the data `02 01 00` and the
