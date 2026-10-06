@@ -201,6 +201,16 @@ static void log_obd_view(const module_t *m)
              m->name, stored, pending, permanent, mil, count);
 }
 
+// Log only: the exact bytes a module answered, to see how its fault records are laid out
+static void log_raw(const char *name, const char *what, const diag_response_t *r)
+{
+    char text[3 * 64 + 8];
+    int n = r->len > 64 ? 64 : r->len;
+    for (int i = 0; i < n; i++) snprintf(text + i * 3, sizeof(text) - i * 3, "%02X ", r->data[i]);
+    text[n * 3] = 0;
+    ESP_LOGI(DIAG_TAG, "  %s %s raw (%u bytes): %s%s", name, what, (unsigned)r->len, text, r->len > 64 ? "..." : "");
+}
+
 // Log only: ask the module for every stored entry whatever its status, and log what comes back. Shows entries the fault
 // filter hides, and why a module said "no access".
 static void log_unfiltered(const module_t *m)
@@ -212,6 +222,7 @@ static void log_unfiltered(const module_t *m)
         return;
     }
     const diag_response_t *r = &resp[0];
+    log_raw(m->name, "unfiltered", r);
     if (r->data[0] != 0x59) {
         ESP_LOGI(DIAG_TAG, "  %s unfiltered (19 02 FF): service 0x%02X, byte 2 0x%02X, byte 3 0x%02X", m->name, r->data[0],
                  r->len > 1 ? r->data[1] : 0, r->len > 2 ? r->data[2] : 0);
@@ -236,6 +247,7 @@ static bool read_module(module_t *m)
 
     const diag_response_t *r = &resp[0];
     m->rx = r->id;
+    log_raw(m->name, "fault read", r);
     if (r->data[0] == 0x59) {
         m->uds = true;
         m->dtc_count = (uint8_t)obd_parse_uds_dtcs(r->data, r->len, m->dtcs, MAX_MODULE_DTCS);
