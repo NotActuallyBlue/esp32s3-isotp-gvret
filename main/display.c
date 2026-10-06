@@ -523,7 +523,9 @@ static int build_rows_detail(row_t *rows)
         title_color = details_color;
     taskEXIT_CRITICAL(&state_lock);
 
-    add_section(rows, &n, title, title_color ? title_color : C_SYSTEM);
+    add_section(rows, &n, "", title_color ? title_color : C_SYSTEM);
+    strlcpy(rows[0].label_buf, title, sizeof(rows[0].label_buf));      // the local title buffer does not outlive this function
+    rows[0].label = rows[0].label_buf;
     for (int i = 0; i < count && i < MAX_DETAILS; i++) {
         if (local[i].label[0] == '#') {
             row_t *s = &rows[n++];
