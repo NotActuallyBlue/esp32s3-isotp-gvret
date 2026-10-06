@@ -173,7 +173,8 @@ What has been checked, and how.
 | Diag clear codes | Cleared 12 of 16 modules on the same car. The engine and transmission refuse every clear (UDS 0x14 in either session: "service not supported"; mode 04: "conditions not correct", because OBD-II lists no codes for them); the two engine entries were `HIST` only. The ABS module (0x713) did not answer the clear. Not tried yet on a car with real stored engine codes |
 | SavvyCAN over Wi-Fi | Works on the bench with SavvyCAN itself (bench simulator, dongle powered over USB) and with `tools/gvret_probe.py` (10 checks). Not yet tried on a real bus |
 | ELM327, sleep, Wi-Fi update | Tested on the bench, against the simulator and desktop test tools. Screens and buttons checked by hand on the bench |
-| ELM327 against a real car, and with real phone apps | Not yet verified |
+| ELM327 with phone apps | Verified on the bench simulator with two Android apps over BLE and Wi-Fi. One app ("OBD2 Scanner: Torque & FixD") connected over BLE only; its Wi-Fi mode never opened a connection to the dongle (the log showed no TCP client) while a second app connected over both, so the dongle's Wi-Fi is not the cause |
+| ELM327 against a real car | Not yet verified |
 | Wake from deep sleep by the BOOT button or the CAN bus | Not yet verified (a timer wake is) |
 
 ## Known issues
