@@ -201,6 +201,32 @@ static void log_obd_view(const module_t *m)
              m->name, stored, pending, permanent, mil, count);
 }
 
+// Log only: ask the module for every stored entry whatever its status, and log what comes back. Shows entries the fault
+// filter hides, and why a module said "no access".
+static void log_unfiltered(const module_t *m)
+{
+    static const uint8_t read_all[] = { 0x19, 0x02, 0xFF };
+    int n = request(m->tx, read_all, sizeof(read_all), SCAN_TIMEOUT_MS);
+    if (n <= 0) {
+        ESP_LOGI(DIAG_TAG, "  %s unfiltered (19 02 FF): no answer", m->name);
+        return;
+    }
+    const diag_response_t *r = &resp[0];
+    if (r->data[0] != 0x59) {
+        ESP_LOGI(DIAG_TAG, "  %s unfiltered (19 02 FF): service 0x%02X, byte 2 0x%02X, byte 3 0x%02X", m->name, r->data[0],
+                 r->len > 1 ? r->data[1] : 0, r->len > 2 ? r->data[2] : 0);
+        return;
+    }
+    obd_dtc_t all[MAX_MODULE_DTCS];
+    int count = obd_parse_uds_dtcs(r->data, r->len, all, MAX_MODULE_DTCS);
+    ESP_LOGI(DIAG_TAG, "  %s unfiltered (19 02 FF): %d entr%s", m->name, count, count == 1 ? "y" : "ies");
+    for (int i = 0; i < count && i < 12; i++) {
+        char code[6];
+        obd_format_dtc(all[i].code, code);
+        ESP_LOGI(DIAG_TAG, "    %s-%02X status 0x%02X (VAG %u)", code, all[i].fault_type, all[i].status, obd_vag_fault_number(all[i].code));
+    }
+}
+
 // Read trouble codes of one module that answered. Returns false if it did not answer at all.
 static bool read_module(module_t *m)
 {
@@ -348,6 +374,7 @@ static void scan(void)
         ESP_LOGI(DIAG_TAG, "Module 0x%03lX (%s) answered on 0x%03lX: %s, %u code(s)", (unsigned long)m->tx, m->name,
                  (unsigned long)m->rx, m->uds ? "UDS" : (m->denied ? "no access" : "OBD"), m->dtc_count);
         log_dtcs(m);
+        log_unfiltered(m);
         if (is_obd_physical(m->tx) && m->uds) log_obd_view(m);
         module_count++;
     }
