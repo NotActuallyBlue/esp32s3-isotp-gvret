@@ -7,14 +7,17 @@
 extern "C" {
 #endif
 
-// RGB565 Color definitions
+// RGB565 colors in the byte order the panel expects. COLOR_RGB turns 8-bit red, green and blue into that order.
+#define COLOR_RGB565(r, g, b)  ((uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3)))
+#define COLOR_RGB(r, g, b)     ((uint16_t)(((COLOR_RGB565(r, g, b)) >> 8) | ((COLOR_RGB565(r, g, b)) << 8)))
+
 #define COLOR_BLACK            0x0000
 #define COLOR_WHITE            0xFFFF
 #define COLOR_RED              0x00F8
 #define COLOR_GREEN            0xE007
 #define COLOR_BLUE             0x1F00
 #define COLOR_DARKGREY         0x1042
-#define COLOR_LIGHTGREY        0x8410
+#define COLOR_LIGHTGREY        COLOR_RGB(190, 196, 208)
 #define COLOR_CYAN             0xFF07
 #define COLOR_YELLOW           0xE0FF
 #define COLOR_ORANGE           0x00FD

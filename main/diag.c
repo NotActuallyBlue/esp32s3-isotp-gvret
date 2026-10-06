@@ -453,7 +453,7 @@ static void entry_at(int index, char *label, size_t lsize, char *value, size_t v
 // off the bottom of the 320 px screen.
 #define LIST_FIRST_Y    81      // below the section title
 #define LIST_LAST_Y     312     // the footer row has to end before this
-#define ROW_H           13
+#define ROW_H           14
 #define HEADER_H        18      // a section row plus its gap
 
 static int entry_height(int index)
@@ -560,13 +560,13 @@ static void show_confirm(int held_ms)
         if (filled > 10) filled = 10;
         for (int i = 0; i < 10; i++) bar[i] = i < filled ? '#' : '-';
         bar[10] = 0;
-        row("HOLDING", bar, COLOR_GREEN);
+        row("HOLDING", bar, COLOR_CYAN);
     } else {
-        row("HOLD KEY 2 s", "to clear", COLOR_GREEN);
+        row("HOLD KEY 2 s", "to clear", COLOR_CYAN);
     }
-    row("BOOT", "cancel", COLOR_RED);
-    show("CLEAR CODES?", COLOR_RED);
-    status("CONFIRM", COLOR_RED);
+    row("BOOT", "cancel", COLOR_LIGHTGREY);
+    show("CLEAR CODES?", COLOR_ORANGE);
+    status("CONFIRM", COLOR_ORANGE);
 }
 
 // Short words for the answers a module gives when it refuses a request
@@ -718,7 +718,7 @@ static void clear_all(void)
             snprintf(value, sizeof(value), "%d BACK", faults);
             row(m->name, value, COLOR_ORANGE);
         } else {
-            row(m->name, m->clear_result, COLOR_RED);
+            row(m->name, m->clear_result, COLOR_ORANGE);
         }
     }
     row("KEY", "menu", COLOR_CYAN);
@@ -763,7 +763,7 @@ static void live_data(void)
             }
             row("", "", 0);
             row("KEY", "back", COLOR_CYAN);
-            show("LIVE DATA", COLOR_GREEN);
+            show("LIVE DATA", COLOR_CYAN);
             status(answered_total ? "LIVE" : "NO DATA", answered_total ? COLOR_GREEN : COLOR_YELLOW);
         }
         vTaskDelay(pdMS_TO_TICKS(10));

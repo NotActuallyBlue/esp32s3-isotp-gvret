@@ -88,7 +88,7 @@ static void show_prompt(hold_zone_t zone)
     switch (zone) {
         case ZONE_BENCH:  display_set_prompt("RELEASE FOR", "BENCH SIM",   COLOR_CYAN);   break;
         case ZONE_UPDATE: display_set_prompt("RELEASE FOR", "WIFI UPDATE", COLOR_ORANGE); break;
-        case ZONE_CANCEL: display_set_prompt("RELEASE TO",  "CANCEL",      COLOR_RED);    break;
+        case ZONE_CANCEL: display_set_prompt("RELEASE TO",  "CANCEL",      COLOR_LIGHTGREY); break;
         default: break;
     }
 }
@@ -115,7 +115,7 @@ static void restart_with(hold_zone_t zone)
             break;
         default:
             ESP_LOGI(TAG, "Menu cancelled, restarting");
-            display_set_prompt("CANCELLED", "REBOOTING", COLOR_RED);
+            display_set_prompt("CANCELLED", "REBOOTING", COLOR_LIGHTGREY);
             break;
     }
 

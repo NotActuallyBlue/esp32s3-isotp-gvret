@@ -49,7 +49,7 @@ static void app_ble_connected(void) {
 }
 
 static void app_ble_disconnected(void) {
-    display_set_status("BLE ISO-TP", "DISCONNECTED", COLOR_RED);
+    display_set_status("BLE ISO-TP", "DISCONNECTED", COLOR_YELLOW);
     bridge_disconnect();
 }
 

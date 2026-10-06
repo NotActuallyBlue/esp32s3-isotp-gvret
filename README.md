@@ -221,4 +221,6 @@ You can update over Wi-Fi without any cable.
 
 Built on [esp32-isotp-ble-bridge](https://github.com/Switchleg1/esp32-isotp-ble-bridge) by Switchleg1.
 
+On-screen text uses [DejaVu Sans Mono](https://dejavu-fonts.github.io/), which is free to use and share.
+
 Developers: see [DEVELOPMENT.md](DEVELOPMENT.md) for building, testing, logs and the source layout.

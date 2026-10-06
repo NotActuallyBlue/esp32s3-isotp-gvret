@@ -14,6 +14,7 @@
 #include "esp_log.h"
 #include "display.h"
 #include "flashlog.h"
+#include "font_aa.h"
 #include "canstats.h"
 #include "esp_app_desc.h"
 #include "esp_ota_ops.h"
@@ -54,6 +55,7 @@ static esp_lcd_panel_handle_t panel_handle = NULL;
 static TimerHandle_t display_timer = NULL;
 static bool display_is_on = true;
 static bool bench_mode = false;
+static volatile bool prompt_hold = false;   // the button menu is on screen: nothing else may redraw until the dongle restarts
 
 // Everything is drawn by display_task. Other tasks only set the state below, so no two tasks ever
 // draw at once and the pixel strip is never overwritten while a transfer is still using it.
@@ -92,57 +94,6 @@ static uint16_t             details_color   = 0;
 #define PAGE_COUNT      3
 static volatile int         page            = 0;
 
-// Basic 8x8 ASCII Font
-static const uint8_t font8x8_basic[95][8] = {
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00}, {0x18,0x3C,0x3C,0x18,0x18,0x00,0x18,0x00}, 
-    {0x66,0x66,0x24,0x00,0x00,0x00,0x00,0x00}, {0x6C,0x6C,0xFE,0x6C,0xFE,0x6C,0x6C,0x00}, 
-    {0x18,0x3E,0x60,0x3C,0x06,0x7C,0x18,0x00}, {0x00,0x63,0x66,0x0C,0x18,0x33,0x63,0x00}, 
-    {0x38,0x6C,0x38,0x76,0xDC,0xCC,0x76,0x00}, {0x30,0x30,0x10,0x20,0x00,0x00,0x00,0x00}, 
-    {0x0C,0x18,0x30,0x30,0x30,0x18,0x0C,0x00}, {0x30,0x18,0x0C,0x0C,0x0C,0x18,0x30,0x00}, 
-    {0x00,0x66,0x3C,0xFF,0x3C,0x66,0x00,0x00}, {0x00,0x18,0x18,0x7E,0x18,0x18,0x00,0x00}, 
-    {0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x30}, {0x00,0x00,0x00,0x7E,0x00,0x00,0x00,0x00}, 
-    {0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x00}, {0x06,0x0C,0x18,0x30,0x60,0xC0,0x80,0x00}, 
-    {0x3C,0x66,0x6E,0x76,0x66,0x66,0x3C,0x00}, {0x18,0x38,0x18,0x18,0x18,0x18,0x7E,0x00}, 
-    {0x3C,0x66,0x06,0x0C,0x18,0x30,0x7E,0x00}, {0x3C,0x66,0x06,0x1C,0x06,0x66,0x3C,0x00}, 
-    {0x0C,0x1C,0x3C,0x6C,0xFE,0x0C,0x0C,0x00}, {0x7E,0x60,0x7C,0x06,0x06,0x66,0x3C,0x00}, 
-    {0x1C,0x30,0x60,0x7C,0x66,0x66,0x3C,0x00}, {0x7E,0xC6,0x06,0x0C,0x18,0x18,0x18,0x00}, 
-    {0x3C,0x66,0x66,0x3C,0x66,0x66,0x3C,0x00}, {0x3C,0x66,0x66,0x3E,0x06,0x0C,0x38,0x00}, 
-    {0x00,0x18,0x18,0x00,0x18,0x18,0x00,0x00}, {0x00,0x18,0x18,0x00,0x18,0x18,0x30,0x00}, 
-    {0x06,0x0C,0x18,0x30,0x18,0x0C,0x06,0x00}, {0x00,0x00,0x7E,0x00,0x7E,0x00,0x00,0x00}, 
-    {0x60,0x30,0x18,0x0C,0x18,0x30,0x60,0x00}, {0x3C,0x66,0x0C,0x18,0x18,0x00,0x18,0x00}, 
-    {0x3C,0x66,0x6E,0x6E,0x60,0x62,0x3C,0x00}, {0x18,0x3C,0x66,0x7E,0x66,0x66,0x66,0x00}, 
-    {0x7C,0x66,0x66,0x7C,0x66,0x66,0x7C,0x00}, {0x3C,0x66,0x60,0x60,0x60,0x66,0x3C,0x00}, 
-    {0x78,0x6C,0x66,0x66,0x66,0x6C,0x78,0x00}, {0x7E,0x60,0x60,0x7C,0x60,0x60,0x7E,0x00}, 
-    {0x7E,0x60,0x60,0x7C,0x60,0x60,0x60,0x00}, {0x3C,0x66,0x60,0x6E,0x66,0x66,0x3A,0x00}, 
-    {0x66,0x66,0x66,0x7E,0x66,0x66,0x66,0x00}, {0x3C,0x18,0x18,0x18,0x18,0x18,0x3C,0x00}, 
-    {0x1E,0x0C,0x0C,0x0C,0x0C,0x6C,0x38,0x00}, {0x66,0x6C,0x78,0x70,0x78,0x6C,0x66,0x00}, 
-    {0x60,0x60,0x60,0x60,0x60,0x60,0x7E,0x00}, {0x63,0x77,0x7F,0x6B,0x63,0x63,0x63,0x00}, 
-    {0x66,0x76,0x7E,0x7E,0x6E,0x66,0x66,0x00}, {0x3C,0x66,0x66,0x66,0x66,0x66,0x3C,0x00}, 
-    {0x7C,0x66,0x66,0x7C,0x60,0x60,0x60,0x00}, {0x3C,0x66,0x66,0x66,0x6E,0x3C,0x0E,0x00}, 
-    {0x7C,0x66,0x66,0x7C,0x78,0x6C,0x66,0x00}, {0x3C,0x66,0x60,0x3C,0x06,0x66,0x3C,0x00}, 
-    {0x7E,0x18,0x18,0x18,0x18,0x18,0x18,0x00}, {0x66,0x66,0x66,0x66,0x66,0x66,0x3C,0x00}, 
-    {0x66,0x66,0x66,0x66,0x66,0x3C,0x18,0x00}, {0x63,0x63,0x63,0x6B,0x7F,0x77,0x63,0x00}, 
-    {0x66,0x66,0x3C,0x18,0x3C,0x66,0x66,0x00}, {0x66,0x66,0x66,0x3C,0x18,0x18,0x18,0x00}, 
-    {0x7E,0x06,0x0C,0x18,0x30,0x60,0x7E,0x00}, {0x3C,0x30,0x30,0x30,0x30,0x30,0x3C,0x00}, 
-    {0xC0,0x60,0x30,0x18,0x0C,0x06,0x02,0x00}, {0x3C,0x0C,0x0C,0x0C,0x0C,0x0C,0x3C,0x00}, 
-    {0x10,0x38,0x6C,0xC6,0x00,0x00,0x00,0x00}, {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xFF}, 
-    {0x30,0x18,0x0C,0x00,0x00,0x00,0x00,0x00}, {0x00,0x00,0x3C,0x06,0x3E,0x66,0x3E,0x00}, 
-    {0x60,0x60,0x7C,0x66,0x66,0x66,0x7C,0x00}, {0x00,0x00,0x3C,0x66,0x60,0x66,0x3C,0x00}, 
-    {0x06,0x06,0x3E,0x66,0x66,0x66,0x3E,0x00}, {0x00,0x00,0x3C,0x66,0x7E,0x60,0x3C,0x00}, 
-    {0x1C,0x30,0x78,0x30,0x30,0x30,0x30,0x00}, {0x00,0x00,0x3E,0x66,0x66,0x3E,0x06,0x3C}, 
-    {0x60,0x60,0x7C,0x66,0x66,0x66,0x66,0x00}, {0x18,0x00,0x38,0x18,0x18,0x18,0x3C,0x00}, 
-    {0x0C,0x00,0x1C,0x0C,0x0C,0x0C,0x6C,0x38}, {0x60,0x60,0x66,0x6C,0x78,0x6C,0x66,0x00}, 
-    {0x38,0x18,0x18,0x18,0x18,0x18,0x3C,0x00}, {0x00,0x00,0x66,0x7F,0x7F,0x6B,0x63,0x00}, 
-    {0x00,0x00,0x7C,0x66,0x66,0x66,0x66,0x00}, {0x00,0x00,0x3C,0x66,0x66,0x66,0x3C,0x00}, 
-    {0x00,0x00,0x7C,0x66,0x66,0x7C,0x60,0x60}, {0x00,0x00,0x3E,0x66,0x66,0x3E,0x06,0x06}, 
-    {0x00,0x00,0x7C,0x66,0x60,0x60,0x60,0x00}, {0x00,0x00,0x3E,0x60,0x3C,0x06,0x7C,0x00}, 
-    {0x18,0x18,0x7E,0x18,0x18,0x18,0x0E,0x00}, {0x00,0x00,0x66,0x66,0x66,0x66,0x3E,0x00}, 
-    {0x00,0x00,0x66,0x66,0x66,0x3C,0x18,0x00}, {0x00,0x00,0x63,0x6B,0x7F,0x36,0x36,0x00}, 
-    {0x00,0x00,0x66,0x3C,0x18,0x3C,0x66,0x00}, {0x00,0x00,0x66,0x66,0x66,0x3E,0x06,0x3C}, 
-    {0x00,0x00,0x7E,0x0C,0x18,0x30,0x7E,0x00}, {0x0E,0x18,0x18,0x70,0x18,0x18,0x0E,0x00}, 
-    {0x18,0x18,0x18,0x00,0x18,0x18,0x18,0x00}, {0x70,0x18,0x18,0x0E,0x18,0x18,0x70,0x00}, 
-    {0x76,0xDC,0x00,0x00,0x00,0x00,0x00,0x00}
-};
 
 // Bluetooth Icon (32x32)
 static const uint8_t icon_bluetooth_32x32[] = {
@@ -178,12 +129,11 @@ static int strip_w, strip_h;
 // RGB565 in the byte order the panel expects (same as the COLOR_* constants)
 static uint16_t rgb(uint8_t r, uint8_t g, uint8_t b)
 {
-    uint16_t c = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
-    return (c >> 8) | (c << 8);
+    return COLOR_RGB(r, g, b);
 }
 
 #define C_VALUE         rgb(235, 238, 245)
-#define C_LABEL         rgb(115, 125, 145)
+#define C_LABEL         rgb(170, 180, 200)
 #define C_LINE          rgb(40, 48, 64)
 #define C_LINK          rgb(0, 200, 255)
 #define C_BUS           rgb(255, 70, 200)
@@ -244,22 +194,49 @@ static void strip_fill(int x, int y, int w, int h, uint16_t color)
     }
 }
 
+// Text is anti-aliased: scale 1 uses the 8 x 13 font, scale 2 the 16 x 16 bold font. Every character is 8 * scale wide.
 static int text_width(const char *str, int scale)
 {
     return (int)strlen(str) * 8 * scale;
 }
 
+static int text_height(int scale)
+{
+    return scale >= 2 ? FONT_LARGE_H : FONT_SMALL_H;
+}
+
+// Mix a text color over what is already in the strip (both in panel byte order)
+static uint16_t blend_pixel(uint16_t under, uint16_t over, uint8_t cover)
+{
+    uint16_t u = (uint16_t)((under >> 8) | (under << 8));
+    uint16_t o = (uint16_t)((over >> 8) | (over << 8));
+    int ur = (u >> 11) & 31, ug = (u >> 5) & 63, ub = u & 31;
+    int orr = (o >> 11) & 31, og = (o >> 5) & 63, ob = o & 31;
+    int r = (orr * cover + ur * (255 - cover)) / 255;
+    int g = (og * cover + ug * (255 - cover)) / 255;
+    int b = (ob * cover + ub * (255 - cover)) / 255;
+    uint16_t c = (uint16_t)((r << 11) | (g << 5) | b);
+    return (uint16_t)((c >> 8) | (c << 8));
+}
+
 static void strip_text(int x, int y, const char *str, uint16_t color, int scale)
 {
+    bool large = scale >= 2;
+    int gw = large ? FONT_LARGE_W : FONT_SMALL_W;
+    int gh = large ? FONT_LARGE_H : FONT_SMALL_H;
     for (int ci = 0; str[ci]; ci++) {
         char c = str[ci];
         if (c < 32 || c > 126) c = ' ';
-        for (int gy = 0; gy < 8; gy++) {
-            uint8_t bits = font8x8_basic[c - 32][gy];
-            for (int b = 0; b < 8; b++) {
-                if (bits & (0x80 >> b)) {
-                    strip_fill(x + ci * 8 * scale + b * scale, y + gy * scale, scale, scale, color);
-                }
+        const uint8_t *glyph = large ? font_large[c - 32] : font_small[c - 32];
+        for (int gy = 0; gy < gh; gy++) {
+            int py = y + gy;
+            if (py < 0 || py >= strip_h) continue;
+            for (int gx = 0; gx < gw; gx++) {
+                uint8_t cover = glyph[gy * gw + gx];
+                int px = x + ci * gw + gx;
+                if (!cover || px < 0 || px >= strip_w) continue;
+                uint16_t *dst = &strip[py * strip_w + px];
+                *dst = cover == 255 ? color : blend_pixel(*dst, color, cover);
             }
         }
     }
@@ -267,11 +244,12 @@ static void strip_text(int x, int y, const char *str, uint16_t color, int scale)
 
 static void display_draw_text(int x0, int y, int box_w, const char *str, uint16_t color, uint16_t bg, int scale, bool center)
 {
-    if (scale < 1 || 8 * scale > STRIP_ROWS || box_w <= 0 || x0 + box_w > LCD_H_RES) return;
-    strip_begin(box_w, 8 * scale, bg);
+    int h = text_height(scale);
+    if (scale < 1 || h > STRIP_ROWS || box_w <= 0 || x0 + box_w > LCD_H_RES) return;
+    strip_begin(box_w, h, bg);
     int tw = text_width(str, scale);
     strip_text(center ? (box_w - tw) / 2 : 0, 0, str, color, scale);
-    display_push(x0, y, box_w, 8 * scale);
+    display_push(x0, y, box_w, h);
 }
 
 // Draw a 32x32 1-bit icon scaled up, in bands of STRIP_ROWS rows
@@ -322,15 +300,15 @@ static void display_bump_timer(void)
 
 // ---------------------------------------------------------------------------------------------
 // Layout (170 x 320 portrait)
-//   header bar 0-35 | status 42 | rows from 68 (13 px pitch, sections 5 px apart) | RX/TX 262, 286
+//   header bar 0-35 | status 42 | rows from 68 (14 px pitch, sections 4 px apart) | RX/TX 262, 286
 // ---------------------------------------------------------------------------------------------
 #define HEADER_H        36
 #define STATUS_Y        42
 #define TOP_DIVIDER_Y   63
 #define ROWS_Y          68
-#define ROW_PITCH       13
-#define SECTION_GAP     5
-#define BOTTOM_DIVIDER_Y 254
+#define ROW_PITCH       14
+#define SECTION_GAP     4
+#define BOTTOM_DIVIDER_Y 258
 #define COUNTERS_Y      262
 #define MAX_ROWS        24
 
@@ -621,17 +599,17 @@ static int build_rows(const display_view_t *v, row_t *rows, uint32_t notify_rate
 
 static void draw_row(const row_t *r, int y)
 {
-    strip_begin(LCD_H_RES, 8, COLOR_BLACK);
+    strip_begin(LCD_H_RES, FONT_SMALL_H, COLOR_BLACK);
     if (r->kind == ROW_SECTION) {
         int tw = text_width(r->label, 1);
-        strip_fill(6, 0, 3, 8, r->color);
+        strip_fill(6, 1, 3, FONT_SMALL_H - 2, r->color);
         strip_text(14, 0, r->label, r->color, 1);
-        strip_fill(14 + tw + 6, 4, LCD_H_RES - (14 + tw + 6) - 8, 1, C_LINE);
+        strip_fill(14 + tw + 6, 6, LCD_H_RES - (14 + tw + 6) - 8, 1, C_LINE);
     } else {
         strip_text(8, 0, r->label, C_LABEL, 1);
         strip_text(LCD_H_RES - 8 - text_width(r->value, 1), 0, r->value, r->color, 1);
     }
-    display_push(0, y, LCD_H_RES, 8);
+    display_push(0, y, LCD_H_RES, FONT_SMALL_H);
 }
 
 static void draw_counter(int y, const char *label, unsigned long value, uint16_t color)
@@ -642,7 +620,7 @@ static void draw_counter(int y, const char *label, unsigned long value, uint16_t
 
     strip_begin(LCD_H_RES, 16, COLOR_BLACK);
     strip_text(8, 0, label, C_LABEL, 2);
-    strip_text(LCD_H_RES - 8 - text_width(num, scale), (16 - 8 * scale) / 2, num, color, scale);
+    strip_text(LCD_H_RES - 8 - text_width(num, scale), (16 - text_height(scale)) / 2, num, color, scale);
     display_push(0, y, LCD_H_RES, 16);
 }
 
@@ -664,11 +642,11 @@ static void display_draw_view(const display_view_t *v)
     }
     int title_x = (v->icon == ICON_NONE) ? 8 : 42;
     int title_scale = (text_width(v->title, 2) <= LCD_H_RES - title_x - 4) ? 2 : 1;
-    display_draw_text(title_x, (HEADER_H - 8 * title_scale) / 2, LCD_H_RES - title_x - 4, v->title, COLOR_BLACK, v->color, title_scale, false);
+    display_draw_text(title_x, (HEADER_H - text_height(title_scale)) / 2, LCD_H_RES - title_x - 4, v->title, COLOR_BLACK, v->color, title_scale, false);
 
     // Status line in the state color
     int status_scale = (text_width(v->status, 2) <= LCD_H_RES - 8) ? 2 : 1;
-    display_draw_text(0, STATUS_Y + (status_scale == 2 ? 0 : 4), LCD_H_RES, v->status, v->color, COLOR_BLACK, status_scale, true);
+    display_draw_text(0, STATUS_Y + (status_scale == 2 ? 0 : 2), LCD_H_RES, v->status, v->color, COLOR_BLACK, status_scale, true);
 
     // Force every row to redraw
     memset(row_key, 0, sizeof(row_key));
@@ -711,6 +689,7 @@ static void display_update_info(const display_view_t *v, uint32_t notify_rate)
         if (rows[i].kind == ROW_SECTION && i > 0) y += SECTION_GAP;
         ys[i] = y;
         if (i >= prev_n || ys[i] != prev_y[i]) moved = true;
+        if (ys[i] + FONT_SMALL_H > LCD_V_RES) { n = i; break; }
         y += ROW_PITCH;
     }
     if (moved) {
@@ -736,12 +715,12 @@ static void display_update_info(const display_view_t *v, uint32_t notify_rate)
     char key[32];
     snprintf(key, sizeof(key), "%lu", rx);
     if (strcmp(key, rx_key) != 0) {
-        draw_counter(COUNTERS_Y, "RX", rx, COLOR_GREEN);
+        draw_counter(COUNTERS_Y, "RX", rx, COLOR_CYAN);
         strlcpy(rx_key, key, sizeof(rx_key));
     }
     snprintf(key, sizeof(key), "%lu", tx);
     if (strcmp(key, tx_key) != 0) {
-        draw_counter(COUNTERS_Y + 24, "TX", tx, COLOR_CYAN);
+        draw_counter(COUNTERS_Y + 24, "TX", tx, COLOR_RGB(190, 160, 255));
         strlcpy(tx_key, key, sizeof(tx_key));
     }
 }
@@ -800,6 +779,7 @@ void display_update_traffic(uint32_t rx_count, uint32_t tx_count)
 
 void display_set_mode_view(const char *mode_title, display_icon_t icon, const char *status_str, uint16_t state_color)
 {
+    if (prompt_hold) return;       // the running mode refreshes its status every few hundred ms; do not overwrite the menu
     taskENTER_CRITICAL(&state_lock);
         // Repaint only when something shown actually changed, so a caller may set the same status repeatedly
         bool changed = strncmp(view.title, mode_title, sizeof(view.title) - 1) != 0 ||
@@ -850,12 +830,15 @@ void display_set_status(const char *transport, const char *status_msg, uint16_t 
 void display_set_prompt(const char *title, const char *status, uint16_t color)
 {
     taskENTER_CRITICAL(&state_lock);
+        bool changed = !view.prompt || strncmp(view.title, title, sizeof(view.title) - 1) != 0 ||
+                       strncmp(view.status, status, sizeof(view.status) - 1) != 0 || view.color != color;
         strlcpy(view.title, title, sizeof(view.title));
         strlcpy(view.status, status, sizeof(view.status));
         view.icon = ICON_NONE;
         view.color = color;
         view.prompt = true;
-        view_dirty = true;
+        prompt_hold = true;
+        if (changed) view_dirty = true;
     taskEXIT_CRITICAL(&state_lock);
     display_wake();
 }
@@ -878,7 +861,7 @@ void display_set_detail(uint8_t index, const char *label, const char *value)
         details[index].color = 0;
         if (index >= detail_count) {
             detail_count = index + 1;
-            view_dirty = true;      // the layout changed
+            if (!prompt_hold) view_dirty = true;      // the layout changed
         }
     taskEXIT_CRITICAL(&state_lock);
     display_wake();
@@ -893,7 +876,7 @@ void display_set_details(const char *title, uint16_t title_color, const display_
     }
     taskENTER_CRITICAL(&state_lock);
         // Only a change in the number of rows needs the whole screen redrawn; otherwise just the rows that differ
-        if (count != detail_count || strcmp(title, details_title) != 0) view_dirty = true;
+        if (!prompt_hold && (count != detail_count || strcmp(title, details_title) != 0)) view_dirty = true;
         strlcpy(details_title, title, sizeof(details_title));
         details_color = title_color;
         for (int i = 0; i < count; i++) {
@@ -912,7 +895,7 @@ void display_clear_details(void)
         detail_count = 0;
         strlcpy(details_title, "UPDATE", sizeof(details_title));
         details_color = 0;
-        view_dirty = true;
+        if (!prompt_hold) view_dirty = true;
     taskEXIT_CRITICAL(&state_lock);
     display_wake();
 }
