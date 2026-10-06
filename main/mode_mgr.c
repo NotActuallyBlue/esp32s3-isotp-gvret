@@ -183,6 +183,20 @@ void mode_mgr_init(void)
         }
         nvs_close(nvs);
     }
+#ifdef SET_SAVED_MODE
+    // Test builds only: store this saved mode once at boot (-DSET_SAVED_MODE=0 Simos, 1 SavvyCAN, 2 Diag, 3 ELM327). Used to put the
+    // dongle back in a known mode after bench testing, since a serial reset from a PC can look like a long BOOT press.
+    if (saved_mode != (dongle_mode_t)SET_SAVED_MODE) {
+        saved_mode = (dongle_mode_t)SET_SAVED_MODE;
+        nvs_handle_t nvs_w;
+        if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_w) == ESP_OK) {
+            nvs_set_u8(nvs_w, NVS_KEY_MODE, (uint8_t)saved_mode);
+            nvs_commit(nvs_w);
+            nvs_close(nvs_w);
+        }
+        ESP_LOGW(TAG, "Saved mode set to %d by the test build", (int)saved_mode);
+    }
+#endif
     current_mode = saved_mode;
 
     // A one-shot request only counts right after a software restart, and only once

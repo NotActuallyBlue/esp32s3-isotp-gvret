@@ -134,7 +134,8 @@ Per-frame lines are limited to a fixed budget per boot after the first PID is re
   Wi-Fi. Put the dongle in bench mode first.
 * **Test builds**, set with `PLATFORMIO_BUILD_FLAGS` (never use these in a car, flash the normal build afterwards):
   `-DFORCE_BENCH_SIM`, `-DFORCE_WIFI_UPDATE`, `-DFORCE_MODE=2` (Diag) or `=3` (ELM327) without saving, `-DDIAG_SELFTEST` (Diag
-  drives its own screens and logs the result), `-DELM_LOG_PASSWORD`, and `-DPOWER_TEST=40` (sleep after 40 s with USB ignored,
+  drives its own screens and logs the result), `-DELM_LOG_PASSWORD`, `-DSET_SAVED_MODE=n` (store a saved mode once at boot: 0 Simos, 1 SavvyCAN, 2 Diag, 3 ELM327; a serial reset from a PC
+  can look like a long BOOT press and change the saved mode), and `-DPOWER_TEST=40` (sleep after 40 s with USB ignored,
   wake by timer after 15 s).
 
 ## Source layout
