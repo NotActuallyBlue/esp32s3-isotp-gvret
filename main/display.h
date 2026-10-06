@@ -28,20 +28,13 @@ extern volatile uint32_t g_tx_count;
 extern volatile uint32_t g_notify_count;    // BLE notifications sent
 extern volatile uint32_t g_error_count;     // ISO-TP send/receive failures
 
-typedef enum {
-    ICON_NONE = 0,
-    ICON_BLUETOOTH,
-    ICON_USB,
-    ICON_OBD
-} display_icon_t;
-
 void display_init(void);
 void display_power(bool power_on);
 bool display_is_awake(void);                 // backlight currently on
 void display_set_bench(bool bench);          // label Simos statuses as the bench simulator
 
 // Portrait UI API
-void display_set_mode_view(const char *mode_title, display_icon_t icon, const char *status_str, uint16_t state_color);
+void display_set_mode_view(const char *mode_title, const char *status_str, uint16_t state_color);
 void display_update_traffic(uint32_t rx_count, uint32_t tx_count);
 
 // Debug panel inputs (cheap, safe to call from any task)

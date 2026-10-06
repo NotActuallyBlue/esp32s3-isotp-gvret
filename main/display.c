@@ -14,7 +14,7 @@
 #include "esp_log.h"
 #include "display.h"
 #include "flashlog.h"
-#include "font_aa.h"
+#include "font.h"
 #include "canstats.h"
 #include "esp_app_desc.h"
 #include "esp_ota_ops.h"
@@ -61,13 +61,12 @@ static volatile bool prompt_hold = false;   // the button menu is on screen: not
 // draw at once and the pixel strip is never overwritten while a transfer is still using it.
 typedef struct {
     char            title[16];
-    display_icon_t  icon;
     char            status[16];
     uint16_t        color;
     bool            prompt;     // header and status only (used for the button menu)
 } display_view_t;
 
-static display_view_t       view            = { "STANDBY", ICON_BLUETOOTH, "READY", COLOR_CYAN, false };
+static display_view_t       view            = { "STANDBY", "READY", COLOR_CYAN, false };
 static bool                 view_dirty      = true;
 static portMUX_TYPE         state_lock      = portMUX_INITIALIZER_UNLOCKED;
 static TaskHandle_t         display_task_handle = NULL;
@@ -94,30 +93,6 @@ static uint16_t             details_color   = 0;
 #define PAGE_COUNT      3
 static volatile int         page            = 0;
 
-
-// Bluetooth Icon (32x32)
-static const uint8_t icon_bluetooth_32x32[] = {
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-    0x00, 0x03, 0x80, 0x00, 0x00, 0x03, 0xc0, 0x00, 0x00, 0x03, 0xe0, 0x00, 0x00, 0x03, 0xf0, 0x00, 
-    0x00, 0x03, 0xb8, 0x00, 0x00, 0x43, 0x9c, 0x00, 0x00, 0x73, 0x9c, 0x00, 0x00, 0x7b, 0xb8, 0x00, 
-    0x00, 0x3f, 0xf0, 0x00, 0x00, 0x1f, 0xe0, 0x00, 0x00, 0x0f, 0xc0, 0x00, 0x00, 0x07, 0x80, 0x00, 
-    0x00, 0x07, 0xc0, 0x00, 0x00, 0x0f, 0xe0, 0x00, 0x00, 0x1f, 0xf0, 0x00, 0x00, 0x3b, 0xf8, 0x00, 
-    0x00, 0x73, 0xbc, 0x00, 0x00, 0x63, 0x9c, 0x00, 0x00, 0x43, 0x9c, 0x00, 0x00, 0x03, 0xb8, 0x00, 
-    0x00, 0x03, 0xf0, 0x00, 0x00, 0x03, 0xe0, 0x00, 0x00, 0x03, 0xc0, 0x00, 0x00, 0x03, 0x80, 0x00, 
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-};
-
-// USB-C / Pill Icon (32x32)
-static const uint8_t icon_usb_32x32[] = {
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7f, 0xfe, 0x00, 
-    0x00, 0x40, 0x02, 0x00, 0x00, 0x40, 0x02, 0x00, 0x00, 0x4e, 0x72, 0x00, 0x00, 0x4e, 0x72, 0x00, 
-    0x00, 0x4e, 0x72, 0x00, 0x00, 0x4e, 0x72, 0x00, 0x00, 0x40, 0x02, 0x00, 0x00, 0x40, 0x02, 0x00, 
-    0x00, 0xff, 0xff, 0x00, 0x01, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80, 
-    0x01, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80, 
-    0x01, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80, 
-    0x01, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x80, 0x01, 0x80, 0x01, 0x80, 
-    0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-};
 
 // ---------------------------------------------------------------------------------------------
 // Drawing core (display_task only)
@@ -250,27 +225,6 @@ static void display_draw_text(int x0, int y, int box_w, const char *str, uint16_
     int tw = text_width(str, scale);
     strip_text(center ? (box_w - tw) / 2 : 0, 0, str, color, scale);
     display_push(x0, y, box_w, h);
-}
-
-// Draw a 32x32 1-bit icon scaled up, in bands of STRIP_ROWS rows
-static void display_draw_icon(int x, int y, const uint8_t *bitmap, uint16_t color, uint16_t bg, int scale)
-{
-    int dim = 32 * scale;
-    if (dim > 64 || x < 0 || x + dim > LCD_H_RES || y < 0 || y + dim > LCD_V_RES) return;
-
-    for (int band = 0; band < dim; band += STRIP_ROWS) {
-        int rows = (dim - band < STRIP_ROWS) ? (dim - band) : STRIP_ROWS;
-        for (int py = 0; py < rows; py++) {
-            int src_row = (band + py) / scale;
-            uint16_t *line = &strip[py * dim];
-            for (int sx = 0; sx < 32; sx++) {
-                uint8_t byte_val = bitmap[src_row * 4 + (sx / 8)];
-                uint16_t px = (byte_val & (0x80 >> (sx % 8))) ? color : bg;
-                for (int s = 0; s < scale; s++) line[sx * scale + s] = px;
-            }
-        }
-        display_push(x, y + band, dim, rows);
-    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -604,7 +558,7 @@ static void draw_row(const row_t *r, int y)
         int tw = text_width(r->label, 1);
         strip_fill(6, 1, 3, FONT_SMALL_H - 2, r->color);
         strip_text(14, 0, r->label, r->color, 1);
-        strip_fill(14 + tw + 6, 6, LCD_H_RES - (14 + tw + 6) - 8, 1, C_LINE);
+        strip_fill(14 + tw + 6, 7, LCD_H_RES - (14 + tw + 6) - 8, 1, C_LINE);
     } else {
         strip_text(8, 0, r->label, C_LABEL, 1);
         strip_text(LCD_H_RES - 8 - text_width(r->value, 1), 0, r->value, r->color, 1);
@@ -633,14 +587,9 @@ static void display_draw_view(const display_view_t *v)
 {
     display_clear(COLOR_BLACK);
 
-    // Header bar: icon and mode name on the state color
+    // Header bar: mode name on the state color
     display_fill_rect(0, 0, LCD_H_RES, HEADER_H, v->color);
-    if (v->icon == ICON_BLUETOOTH || v->icon == ICON_OBD) {
-        display_draw_icon(4, 2, icon_bluetooth_32x32, COLOR_BLACK, v->color, 1);
-    } else if (v->icon == ICON_USB) {
-        display_draw_icon(4, 2, icon_usb_32x32, COLOR_BLACK, v->color, 1);
-    }
-    int title_x = (v->icon == ICON_NONE) ? 8 : 42;
+    int title_x = 8;
     int title_scale = (text_width(v->title, 2) <= LCD_H_RES - title_x - 4) ? 2 : 1;
     display_draw_text(title_x, (HEADER_H - text_height(title_scale)) / 2, LCD_H_RES - title_x - 4, v->title, COLOR_BLACK, v->color, title_scale, false);
 
@@ -777,17 +726,16 @@ void display_update_traffic(uint32_t rx_count, uint32_t tx_count)
     display_wake();
 }
 
-void display_set_mode_view(const char *mode_title, display_icon_t icon, const char *status_str, uint16_t state_color)
+void display_set_mode_view(const char *mode_title, const char *status_str, uint16_t state_color)
 {
     if (prompt_hold) return;       // the running mode refreshes its status every few hundred ms; do not overwrite the menu
     taskENTER_CRITICAL(&state_lock);
         // Repaint only when something shown actually changed, so a caller may set the same status repeatedly
         bool changed = strncmp(view.title, mode_title, sizeof(view.title) - 1) != 0 ||
                        strncmp(view.status, status_str, sizeof(view.status) - 1) != 0 ||
-                       view.icon != icon || view.color != state_color || view.prompt;
+                       view.color != state_color || view.prompt;
         strlcpy(view.title, mode_title, sizeof(view.title));
         strlcpy(view.status, status_str, sizeof(view.status));
-        view.icon = icon;
         view.color = state_color;
         view.prompt = false;
         if (changed) view_dirty = true;
@@ -797,19 +745,15 @@ void display_set_mode_view(const char *mode_title, display_icon_t icon, const ch
 
 void display_set_status(const char *transport, const char *status_msg, uint16_t color)
 {
-    display_icon_t icon = ICON_BLUETOOTH;
     const char *header_label = transport;
     
     if (strstr(transport, "SAVVY") != NULL || strstr(transport, "USB") != NULL) {
-        icon = ICON_NONE;
         header_label = bench_mode ? "BENCH SAVVY" : "SAVVYCAN";
     } else if (strstr(transport, "BENCH") != NULL) {
         header_label = "BENCH SIM";
     } else if (strstr(transport, "UPDATE") != NULL) {
-        icon = ICON_NONE;
         header_label = "WIFI UPDATE";
     } else if (strstr(transport, "DIAG") != NULL) {
-        icon = ICON_NONE;
         header_label = bench_mode ? "BENCH DIAG" : "DIAG";
     } else if (strstr(transport, "ELM") != NULL) {
         header_label = bench_mode ? "BENCH ELM327" : "ELM327";
@@ -824,7 +768,7 @@ void display_set_status(const char *transport, const char *status_msg, uint16_t 
     else if (strstr(status_msg, "DISCONNECTED") != NULL) short_status = "OFFLINE";
     else if (strstr(status_msg, "REBOOTING") != NULL) short_status = "REBOOT";
 
-    display_set_mode_view(header_label, icon, short_status, color);
+    display_set_mode_view(header_label, short_status, color);
 }
 
 void display_set_prompt(const char *title, const char *status, uint16_t color)
@@ -834,7 +778,6 @@ void display_set_prompt(const char *title, const char *status, uint16_t color)
                        strncmp(view.status, status, sizeof(view.status) - 1) != 0 || view.color != color;
         strlcpy(view.title, title, sizeof(view.title));
         strlcpy(view.status, status, sizeof(view.status));
-        view.icon = ICON_NONE;
         view.color = color;
         view.prompt = true;
         prompt_hold = true;
