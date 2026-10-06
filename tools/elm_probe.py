@@ -138,9 +138,11 @@ async def checks(link):
     check("garbage -> ?", lines(r)[-1:] == ["?"], r)
 
     r = await ask(link, "04")
-    check("04 clears codes in both modules", sum(l == "44" for l in lines(r)) == 2, r.replace("\r", " | "))
+    ls = lines(r)
+    check("04: the ECU clears, the TCU refuses with 'conditions not correct'", "44" in ls and "7F 04 22" in ls, r.replace("\r", " | "))
     r = await ask(link, "03")
-    check("03 afterwards: nothing stored", sum(l.startswith("43 00") for l in lines(r)) == 2, r.replace("\r", " | "))
+    ls = lines(r)
+    check("03 afterwards: the ECU has nothing stored, the TCU still has its code", "43 00" in ls and any(l.startswith("43 01 07 00") for l in ls), r.replace("\r", " | "))
 
 
 async def main():

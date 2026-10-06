@@ -47,7 +47,9 @@ typedef struct {
     bool        request_dropped;        // the dongle sent frames faster than st_min_us: ignore this request
     bool        obd;                    // answers the functional OBD-II address 0x7DF as well
     bool        no_uds_dtc;             // refuses UDS 0x19 (an OBD-only module): codes come from modes 03/07
-    bool        no_uds_clear;           // reads codes with UDS but refuses UDS 0x14, like a Mk7 engine ECU: only OBD mode 04 clears
+    bool        no_uds_clear;           // reads codes with UDS but refuses UDS 0x14 (NRC 11), like a Mk7 engine ECU: OBD mode 04 clears
+    bool        clear_needs_extended;   // refuses every clear until the extended diagnostic session (10 03) is open
+    bool        extended;               // the extended session is open
     sim_dtc_t   dtcs[SIM_MAX_DTCS];
     uint8_t     dtc_count;
 } sim_node_t;
@@ -60,7 +62,7 @@ static sim_node_t       sim_nodes[SIM_NODE_COUNT] = {
     { .name = "ECU", .request_id = 0x7E0, .response_id = 0x7E8, .st_min_us = 0, .obd = true, .no_uds_clear = true },
     // A DSG-like module: asks for 10 ms between consecutive frames and silently drops a request whose frames
     // come faster. This reproduces the "flow control, then silence" behaviour seen on the real TCU.
-    { .name = "TCU", .request_id = 0x7E1, .response_id = 0x7E9, .st_min_us = 10000, .obd = true, .no_uds_dtc = true },
+    { .name = "TCU", .request_id = 0x7E1, .response_id = 0x7E9, .st_min_us = 10000, .obd = true, .no_uds_dtc = true, .clear_needs_extended = true },
     // UDS-only modules (VAG style 0x7xx / +0x6A addressing) for the multi-module scan
     { .name = "GATEWAY", .request_id = 0x710, .response_id = 0x77A, .st_min_us = 0 },
     { .name = "ABS", .request_id = 0x713, .response_id = 0x77D, .st_min_us = 0 },
@@ -134,6 +136,7 @@ static uint16_t sim_build_response(int node, const uint8_t *req, uint16_t len, u
 
     switch (sid) {
     case 0x10:  // DiagnosticSessionControl
+        sim_nodes[node].extended = (sub == 0x03);
         out[0] = 0x50; out[1] = sub; out[2] = 0x00; out[3] = 0x32; out[4] = 0x01; out[5] = 0xF4;
         return 6;
     case 0x11:  // ECUReset
@@ -163,11 +166,13 @@ static uint16_t sim_build_response(int node, const uint8_t *req, uint16_t len, u
         return pos;
     }
     case 0x14:  // ClearDiagnosticInformation
+        if (sim_nodes[node].clear_needs_extended && !sim_nodes[node].extended) { out[0] = 0x7F; out[1] = sid; out[2] = 0x22; return 3; }
         if (sim_nodes[node].no_uds_clear) { out[0] = 0x7F; out[1] = sid; out[2] = 0x11; return 3; }
         sim_nodes[node].dtc_count = 0;
         out[0] = 0x54;
         return 1;
     case 0x04:  // OBD-II clear DTCs
+        if (sim_nodes[node].clear_needs_extended && !sim_nodes[node].extended) { out[0] = 0x7F; out[1] = sid; out[2] = 0x22; return 3; }
         sim_nodes[node].dtc_count = 0;
         out[0] = 0x44;
         return 1;

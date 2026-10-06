@@ -26,7 +26,7 @@ Honest summary of what has been checked and how.
 | Simos Tools with the TCU enabled | Shows "Failed to create PID frame" in the car (see [Known issues](#known-issues)) |
 | Simos BLE, key on / engine off (the state needed for flashing) | Works: Simos Tools pulled ECU info over the dongle on a 2017 Mk7 GTI |
 | Diag scan, live data and vehicle info in the car | Works on a 2017 Mk7 GTI with key on / engine off: 16 modules found, VIN, live data and stored codes correct (found and fixed on the first runs: "test not completed" entries were counted as codes, and the code list could overlap when paging) |
-| Diag clear codes | Cleared 12 of 16 modules on the same car. The engine and transmission answered UDS clear with "service not supported", so the firmware now falls back to OBD mode 04 for them (tested on the simulator, not yet in the car). The ABS module did not answer the clear |
+| Diag clear codes | Cleared 12 of 16 modules on the same car. The engine and transmission answered UDS clear with "service not supported", so the firmware falls back to OBD mode 04, then to the extended session (both tested on the simulator only: mode 04 was tried in the car and refused with "conditions not correct"). The ABS module did not answer the clear |
 | ELM327, sleep, Wi-Fi update | Tested on the bench, against the simulator and desktop test tools. Screens and buttons checked by hand on the bench |
 | ELM327 against a real car, and with real phone apps | Not yet verified |
 | Wake from deep sleep by the BOOT button or the CAN bus | Not yet verified (a timer wake is) |
@@ -101,8 +101,10 @@ Two buttons: **BOOT** (tap = next) and **KEY** (tap = select / back).
   engine and transmission, a module's three-byte code can be a VAG-specific number rather than a standard SAE code.
 * **Clear codes** needs you to **hold KEY for 2 s**. It sends UDS 0x14 (or mode 04 to OBD-only modules) to every
   module that answered. Engine and transmission control units on a Mk7 refuse UDS 0x14 ("service not supported"), so
-  for those the firmware retries with OBD mode 04, which clears their emission related codes. It then reads every
-  module back and shows what is really stored now. A code that is still active comes straight back, and some
+  for those the firmware retries with OBD mode 04, which clears their emission related codes. If a module still refuses
+  (on the test car the engine and transmission answered mode 04 with "conditions not correct"), it opens the extended
+  diagnostic session, clears there and returns to the default session. It then reads every module back and shows what
+  is really stored now. A code that is still active comes straight back, and some
   modules (such as the ABS on the test car) may not accept a clear without a diagnostic session. Clearing also resets readiness
   monitors and erases freeze frames, and needs ignition on.
 * **Live data** shows engine speed, speed, coolant, load, throttle, intake temperature, MAP and module voltage.

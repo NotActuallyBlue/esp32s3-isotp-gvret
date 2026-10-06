@@ -73,6 +73,9 @@ static void test_uds_dtcs(void)
     obd_format_status(0x89, s, sizeof(s)); TEST_ASSERT_EQUAL_STRING("ACT MIL", s);
     obd_format_status(0x08, s, sizeof(s)); TEST_ASSERT_EQUAL_STRING("STORED", s);
     obd_format_status(0x04, s, sizeof(s)); TEST_ASSERT_EQUAL_STRING("PEND", s);
+    obd_format_status(0x20, s, sizeof(s)); TEST_ASSERT_EQUAL_STRING("HIST", s);          // failed since last clear, not failing now
+    obd_format_status(0x02, s, sizeof(s)); TEST_ASSERT_EQUAL_STRING("THIS", s);          // failed in this drive
+    obd_format_status(0x42, s, sizeof(s)); TEST_ASSERT_EQUAL_STRING("THIS", s);
 
     const uint8_t negative[] = { 0x7F, 0x19, 0x12 };
     TEST_ASSERT_EQUAL_INT(0, obd_parse_uds_dtcs(negative, sizeof(negative), d, 8));

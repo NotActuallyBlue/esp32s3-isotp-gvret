@@ -26,8 +26,12 @@ uint16_t obd_vag_fault_number(uint16_t code)
 void obd_format_status(uint8_t status, char *out, size_t out_size)
 {
     out[0] = 0;
+    // Most important first: failing now, failed in this drive, pending, confirmed, otherwise only history
     if (status & DTC_STATUS_TEST_FAILED)        strlcat(out, "ACT ", out_size);
+    else if (status & 0x02)                     strlcat(out, "THIS ", out_size);
     else if (status & DTC_STATUS_PENDING)       strlcat(out, "PEND ", out_size);
+    else if (status & DTC_STATUS_CONFIRMED)     strlcat(out, "STORED ", out_size);
+    else if (status & 0x20)                     strlcat(out, "HIST ", out_size);
     else                                        strlcat(out, "STORED ", out_size);
     if (status & DTC_STATUS_WARNING_LAMP)       strlcat(out, "MIL", out_size);
     size_t n = strlen(out);

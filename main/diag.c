@@ -490,6 +490,46 @@ static const char *nrc_text(uint8_t nrc, char *buf, size_t size)
     return buf;
 }
 
+static void set_clear_result(module_t *m, int n, uint8_t positive)
+{
+    if (n <= 0) {
+        strlcpy(m->clear_result, "NO REPLY", sizeof(m->clear_result));
+    } else if (resp[0].data[0] == positive) {
+        strlcpy(m->clear_result, "OK", sizeof(m->clear_result));
+    } else if (resp[0].len >= 3 && resp[0].data[0] == 0x7F) {
+        nrc_text(resp[0].data[2], m->clear_result, sizeof(m->clear_result));
+    } else {
+        strlcpy(m->clear_result, "UNKNOWN", sizeof(m->clear_result));
+    }
+}
+
+static bool is_negative(int n, uint8_t nrc_a, uint8_t nrc_b)
+{
+    return n > 0 && resp[0].len >= 3 && resp[0].data[0] == 0x7F && (resp[0].data[2] == nrc_a || resp[0].data[2] == nrc_b);
+}
+
+// Clear in the extended diagnostic session (10 03), then go back to the default one. Some control units only accept the
+// clear there. Returns the raw result of the clear request.
+static int clear_in_extended_session(module_t *m)
+{
+    static const uint8_t extended[] = { 0x10, 0x03 };
+    static const uint8_t clear_uds[] = { 0x14, 0xFF, 0xFF, 0xFF };
+    static const uint8_t normal[] = { 0x10, 0x01 };
+
+    int n = request(m->tx, extended, sizeof(extended), 300);
+    if (n <= 0 || resp[0].data[0] != 0x50) {
+        ESP_LOGW(DIAG_TAG, "%s: extended session not accepted", m->name);
+        return n > 0 ? n : 0;
+    }
+    n = request(m->tx, clear_uds, sizeof(clear_uds), 500);
+    uint8_t first = n > 0 ? resp[0].data[0] : 0;
+    diag_response_t keep = resp[0];
+    request(m->tx, normal, sizeof(normal), 300);
+    resp[0] = keep;                                     // report the clear's answer, not the session change's
+    (void)first;
+    return n;
+}
+
 static void clear_module(module_t *m)
 {
     static const uint8_t clear_uds[] = { 0x14, 0xFF, 0xFF, 0xFF };
@@ -501,24 +541,22 @@ static void clear_module(module_t *m)
 
     int n = request(m->tx, req, len, 500);
 
-    // The engine and transmission control units of a Mk7 answer UDS 0x14 with "service not supported"; they do accept the
-    // OBD-II clear (mode 04), which clears their emission related codes. Try it before giving up.
-    if (use_uds && is_obd_physical(m->tx) && n > 0 && resp[0].len >= 3 && resp[0].data[0] == 0x7F &&
-        (resp[0].data[2] == 0x11 || resp[0].data[2] == 0x12)) {
+    // The engine and transmission control units of a Mk7 answer UDS 0x14 with "service not supported"; they should accept
+    // the OBD-II clear (mode 04) for their emission related codes. Try it before giving up.
+    if (use_uds && is_obd_physical(m->tx) && is_negative(n, 0x11, 0x12)) {
         ESP_LOGW(DIAG_TAG, "%s refused UDS clear (NRC %02X), trying OBD mode 04", m->name, resp[0].data[2]);
         n = request(m->tx, &clear_obd, 1, 500);
         positive = 0x44;
     }
 
-    if (n <= 0) {
-        strlcpy(m->clear_result, "NO REPLY", sizeof(m->clear_result));
-    } else if (resp[0].data[0] == positive) {
-        strlcpy(m->clear_result, "OK", sizeof(m->clear_result));
-    } else if (resp[0].len >= 3 && resp[0].data[0] == 0x7F) {
-        nrc_text(resp[0].data[2], m->clear_result, sizeof(m->clear_result));
-    } else {
-        strlcpy(m->clear_result, "UNKNOWN", sizeof(m->clear_result));
+    // Last resort: the extended diagnostic session. Only after a refusal, never after silence.
+    if (n > 0 && resp[0].data[0] == 0x7F && resp[0].len >= 3 && resp[0].data[2] != 0x78) {
+        ESP_LOGW(DIAG_TAG, "%s refused the clear (NRC %02X), trying the extended session", m->name, resp[0].data[2]);
+        n = clear_in_extended_session(m);
+        positive = 0x54;
     }
+
+    set_clear_result(m, n, positive);
     ESP_LOGW(DIAG_TAG, "Clear codes on %s (0x%03lX): %s", m->name, (unsigned long)m->tx, m->clear_result);
 }
 
