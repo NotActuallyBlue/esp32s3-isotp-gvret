@@ -26,7 +26,7 @@ Honest summary of what has been checked and how.
 | Simos Tools with the TCU enabled | Shows "Failed to create PID frame" in the car (see [Known issues](#known-issues)) |
 | Simos BLE, key on / engine off (the state needed for flashing) | Works: Simos Tools pulled ECU info over the dongle on a 2017 Mk7 GTI |
 | Diag scan, live data and vehicle info in the car | Works on a 2017 Mk7 GTI with key on / engine off: 16 modules found, VIN, live data and stored codes correct (found and fixed on the first runs: "test not completed" entries were counted as codes, and the code list could overlap when paging) |
-| Diag clear codes | Cleared 12 of 16 modules on the same car. The engine and transmission answered UDS clear with "service not supported", so the firmware falls back to OBD mode 04, then to the extended session (both tested on the simulator only: mode 04 was tried in the car and refused with "conditions not correct"). The ABS module did not answer the clear |
+| Diag clear codes | Cleared 12 of 16 modules on the same car. The engine and transmission refuse every clear (UDS 0x14 in either session: "service not supported"; mode 04: "conditions not correct", because OBD-II lists no codes for them). The two engine entries were `HIST` only, not real faults. The ABS module (0x713) did not answer the clear. Not tried yet on a car with real stored engine codes |
 | ELM327, sleep, Wi-Fi update | Tested on the bench, against the simulator and desktop test tools. Screens and buttons checked by hand on the bench |
 | ELM327 against a real car, and with real phone apps | Not yet verified |
 | Wake from deep sleep by the BOOT button or the CAN bus | Not yet verified (a timer wake is) |
@@ -96,7 +96,10 @@ Two buttons: **BOOT** (tap = next) and **KEY** (tap = select / back).
 * **Scan codes** asks the OBD addresses 0x7E0-0x7E7 and the VAG range 0x700-0x76F (answers on request + 0x6A),
   about 6 s. Modules that speak UDS are read with service 0x19 and status mask 0xAF, so only real faults come back
   (failed, pending, confirmed, failed since last clear, lamp requested). VAG modules also list every code they
-  monitor with the "test not completed" bits set, and those are not shown. OBD-only modules fall back to modes 03 and
+  monitor with the "test not completed" bits set, and those are not shown.
+  Entries that only say "failed at some point since the last clear" (status 0x20, shown as `HIST`) are history, not
+  faults: the module does not hold them as stored, pending or active, OBD-II does not list them, and the headline
+  count and the clear result leave them out. They are shown dimmed so you can see them. OBD-only modules fall back to modes 03 and
   07. Codes are listed per module with their status (ACT / PEND / STORED / MIL) and paged to fit the screen. Outside the
   engine and transmission, a module's three-byte code can be a VAG-specific number rather than a standard SAE code.
 * **Clear codes** needs you to **hold KEY for 2 s**. It sends UDS 0x14 (or mode 04 to OBD-only modules) to every

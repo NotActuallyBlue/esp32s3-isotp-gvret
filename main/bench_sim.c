@@ -77,7 +77,8 @@ static void sim_reset_dtcs(void)
     sim_nodes[0].dtcs[2] = (sim_dtc_t){ 0x0420, 0x00, 0x04 };     // P0420 pending only
     sim_nodes[0].dtcs[3] = (sim_dtc_t){ 0x003A, 0xFD, 0x40 };     // "test not completed": listed by real modules, not a fault
     sim_nodes[0].dtcs[4] = (sim_dtc_t){ 0x0053, 0x8C, 0x50 };
-    sim_nodes[0].dtc_count = 5;
+    sim_nodes[0].dtcs[5] = (sim_dtc_t){ 0x0043, 0x1A, 0x20 };     // "failed since last clear" only: history, survives a clear like on the real car
+    sim_nodes[0].dtc_count = 6;
     sim_nodes[1].dtcs[0] = (sim_dtc_t){ 0x0700, 0x00, 0x08 };     // P0700 stored
     sim_nodes[1].dtc_count = 1;
     sim_nodes[2].dtcs[0] = (sim_dtc_t){ 0xC100, 0x00, 0x28 };     // U0100 stored
@@ -173,7 +174,12 @@ static uint16_t sim_build_response(int node, const uint8_t *req, uint16_t len, u
         return 1;
     case 0x04:  // OBD-II clear DTCs
         if (sim_nodes[node].clear_needs_extended && !sim_nodes[node].extended) { out[0] = 0x7F; out[1] = sid; out[2] = 0x22; return 3; }
-        sim_nodes[node].dtc_count = 0;
+        {   // mode 04 clears stored, pending and active faults, not history entries
+            sim_node_t *n = &sim_nodes[node];
+            int keep = 0;
+            for (int i = 0; i < n->dtc_count; i++) if ((n->dtcs[i].status & 0x0F) == 0) n->dtcs[keep++] = n->dtcs[i];
+            n->dtc_count = keep;
+        }
         out[0] = 0x44;
         return 1;
     case 0x03: case 0x07: case 0x0A: {  // OBD-II stored / pending / permanent DTCs

@@ -255,10 +255,31 @@ static const char *can_state_text(uint16_t *color)
     return "OK";
 }
 
+// An entry that only says "failed at some point since the last clear" (0x20) is history: the module does not hold it as a
+// stored, pending or active fault, and OBD-II does not list it. Real faults carry one of the low four status bits.
+static bool dtc_is_history(const obd_dtc_t *d)
+{
+    return d->has_status && (d->status & 0x0F) == 0;
+}
+
+static int module_faults(const module_t *m)
+{
+    int n = 0;
+    for (int i = 0; i < m->dtc_count; i++) if (!dtc_is_history(&m->dtcs[i])) n++;
+    return n;
+}
+
 static int total_codes(void)
 {
     int total = 0;
-    for (int i = 0; i < module_count; i++) total += modules[i].dtc_count;
+    for (int i = 0; i < module_count; i++) total += module_faults(&modules[i]);
+    return total;
+}
+
+static int total_history(void)
+{
+    int total = 0;
+    for (int i = 0; i < module_count; i++) total += modules[i].dtc_count - module_faults(&modules[i]);
     return total;
 }
 
@@ -278,6 +299,7 @@ static void show_menu(void)
         rowf("MODULES", COLOR_WHITE, "%d", module_count);
         int codes = total_codes();
         rowf("CODES", codes ? COLOR_ORANGE : COLOR_GREEN, "%d", codes);
+        if (total_history()) rowf("HISTORY", COLOR_LIGHTGREY, "%d", total_history());
     }
     show("DIAGNOSTICS", COLOR_CYAN);
     status("READY", COLOR_CYAN);
@@ -357,7 +379,7 @@ static void entry_at(int index, char *label, size_t lsize, char *value, size_t v
         const module_t *m = &modules[i];
         if (index == 0) {
             snprintf(label, lsize, "#%s", m->name);
-            *color = m->dtc_count ? COLOR_ORANGE : COLOR_GREEN;
+            *color = module_faults(m) ? COLOR_ORANGE : (m->dtc_count ? COLOR_LIGHTGREY : COLOR_GREEN);
             return;
         }
         index--;
@@ -375,7 +397,8 @@ static void entry_at(int index, char *label, size_t lsize, char *value, size_t v
             if (d->has_status) {
                 snprintf(label, lsize, "%s-%02X", code, d->fault_type);
                 obd_format_status(d->status, value, vsize);
-                *color = (d->status & (DTC_STATUS_TEST_FAILED | DTC_STATUS_WARNING_LAMP)) ? COLOR_RED :
+                *color = dtc_is_history(d) ? COLOR_LIGHTGREY :
+                         (d->status & (DTC_STATUS_TEST_FAILED | DTC_STATUS_WARNING_LAMP)) ? COLOR_RED :
                          ((d->status & DTC_STATUS_PENDING) && !(d->status & DTC_STATUS_CONFIRMED) ? COLOR_YELLOW : COLOR_ORANGE);
             } else {
                 snprintf(label, lsize, "%s", code);
@@ -477,6 +500,7 @@ static void show_results(void)
     int codes = total_codes();
     char text[32];
     if (module_count == 0) status("NO MODULES", COLOR_RED);
+    else if (codes == 0 && total_history()) { snprintf(text, sizeof(text), "%d HISTORY", total_history()); status(text, COLOR_YELLOW); }
     else if (codes == 0) status("NO CODES", COLOR_GREEN);
     else { snprintf(text, sizeof(text), "%d CODE%s", codes, codes == 1 ? "" : "S"); status(text, COLOR_ORANGE); }
 }
@@ -508,9 +532,16 @@ static void show_confirm(int held_ms)
     status("CONFIRM", COLOR_RED);
 }
 
+// Short words for the answers a module gives when it refuses a request
 static const char *nrc_text(uint8_t nrc, char *buf, size_t size)
 {
-    snprintf(buf, size, "NRC %02X", nrc);
+    switch (nrc) {
+    case 0x11: case 0x12: snprintf(buf, size, "NOT SUPP"); break;      // service or sub-function not supported
+    case 0x22: snprintf(buf, size, "NOT NOW");  break;                // conditions not correct
+    case 0x33: snprintf(buf, size, "SECURITY"); break;                // security access denied
+    case 0x7E: case 0x7F: snprintf(buf, size, "SESSION"); break;      // not supported in the active session
+    default:   snprintf(buf, size, "NRC %02X", nrc); break;
+    }
     return buf;
 }
 
@@ -631,19 +662,23 @@ static void clear_all(void)
         m->uds = keep_uds;
         m->denied = denied;
         read_module(m);
-        left += m->dtc_count;
-        if (m->dtc_count == 0 && strcmp(result, "OK") == 0) cleared++;
+        left += module_faults(m);                                    // history-only entries are not faults
+        if (module_faults(m) == 0) cleared++;
     }
 
     rows_reset();
     for (int i = 0; i < module_count && i < 14; i++) {
         const module_t *m = &modules[i];
+        int faults = module_faults(m), hist = m->dtc_count - faults;
+        bool accepted = strcmp(m->clear_result, "OK") == 0;
         char value[24];
-        if (strcmp(m->clear_result, "OK") == 0 && m->dtc_count == 0) {
-            snprintf(value, sizeof(value), "CLEARED");
-            row(m->name, value, COLOR_GREEN);
-        } else if (strcmp(m->clear_result, "OK") == 0) {
-            snprintf(value, sizeof(value), "%u BACK", m->dtc_count);
+        if (m->dtc_count == 0) {
+            row(m->name, accepted ? "CLEARED" : "NO CODES", COLOR_GREEN);
+        } else if (faults == 0) {
+            snprintf(value, sizeof(value), "%d HISTORY", hist);          // only "failed since last clear" entries are left
+            row(m->name, value, COLOR_LIGHTGREY);
+        } else if (accepted) {
+            snprintf(value, sizeof(value), "%d BACK", faults);
             row(m->name, value, COLOR_ORANGE);
         } else {
             row(m->name, m->clear_result, COLOR_RED);
