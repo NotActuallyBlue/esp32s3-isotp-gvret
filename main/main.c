@@ -32,6 +32,8 @@
 #include "esp_ota_ops.h"
 #include "esp_flash.h"
 #include "esp_heap_caps.h"
+#include "canstats.h"
+#include "driver/twai.h"
 
 SemaphoreHandle_t sync_task_sem = NULL;
 
@@ -162,9 +164,32 @@ void app_main(void)
     // if it crashes before that, the bootloader rolls back to the previous image.
     int uptime_ticks = 0;
     int heap_ticks = 0;
+    int bus_ticks = 0, bus_quiet_logs = 0;
+    uint32_t bus_last_frames = 0;
+    bool bus_was_alive = true;      // so a silent bus is logged at the first check
     bool image_validated = false;
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(500));
+
+        // Bus timeline: when the car's network wakes up or goes quiet. Logged on every change, and once a minute.
+        if (!bench && current_mode != OP_MODE_WIFI_UPDATE && ++bus_ticks >= 20) {
+            bus_ticks = 0;
+            canstats_totals_t totals;
+            canstats_get_totals(&totals);
+            uint32_t delta = totals.frames - bus_last_frames;
+            bus_last_frames = totals.frames;
+            bool alive = delta > 0;
+            twai_status_info_t st;
+            bool have_state = twai_get_status_info(&st) == ESP_OK;
+            if (alive != bus_was_alive || ++bus_quiet_logs >= 6) {
+                bus_quiet_logs = 0;
+                bus_was_alive = alive;
+                ESP_LOGI(MAIN_TAG, "Bus: %s, %lu frame(s) in the last 10 s, %lu unique id(s), CAN %s (TEC %lu, REC %lu)",
+                         alive ? "ALIVE" : "SILENT", (unsigned long)delta, (unsigned long)totals.unique_ids,
+                         !have_state ? "n/a" : st.state == TWAI_STATE_RUNNING ? "running" : st.state == TWAI_STATE_BUS_OFF ? "BUS OFF" : "other",
+                         have_state ? (unsigned long)st.tx_error_counter : 0UL, have_state ? (unsigned long)st.rx_error_counter : 0UL);
+            }
+        }
 
         // Heap health, so a slow leak or a tight spot shows up in the flash log (one short line every 30 s)
         if (++heap_ticks >= 60) {
