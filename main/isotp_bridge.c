@@ -115,6 +115,32 @@ static void isotp_wait_link_ready(uint16_t index)
     }
 }
 
+// ISO-TP errors repeat when a module answers late; log the first one, then one summary per minute
+#define ERROR_LOG_INTERVAL_US (60LL * 1000 * 1000)
+
+typedef struct {
+    int64_t last_log_us;
+    uint32_t suppressed;
+} ErrorLogState;
+
+static void log_isotp_error(ErrorLogState *state, uint16_t number, const char *direction, int16_t code)
+{
+    g_error_count++;
+    int64_t now = esp_timer_get_time();
+    if (state->last_log_us == 0 || now - state->last_log_us >= ERROR_LOG_INTERVAL_US) {
+        if (state->suppressed > 0) {
+            ESP_LOGW(BRIDGE_TAG, "[%d] ISO-TP %s error: %d (%lu more since the last report)", number, direction, code,
+                     (unsigned long)state->suppressed);
+        } else {
+            ESP_LOGW(BRIDGE_TAG, "[%d] ISO-TP %s error: %d", number, direction, code);
+        }
+        state->last_log_us = now;
+        state->suppressed = 0;
+    } else {
+        state->suppressed++;
+    }
+}
+
 static void isotp_processing_task(void *arg)
 {
     ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
@@ -126,6 +152,8 @@ static void isotp_processing_task(void *arg)
     uint16_t number = isotp_link_container->number;
     int16_t last_send_result = ISOTP_PROTOCOL_RESULT_OK;
     int16_t last_receive_result = ISOTP_PROTOCOL_RESULT_OK;
+    ErrorLogState send_errors = {0};
+    ErrorLogState receive_errors = {0};
 
     tMUTEX(isotp_link_container->task_mutex);
         xSemaphoreGive(sync_task_sem);
@@ -154,13 +182,11 @@ static void isotp_processing_task(void *arg)
             rMUTEX(isotp_link_container->data_mutex);
 
             if (send_result != last_send_result) {
-                if (send_result != ISOTP_PROTOCOL_RESULT_OK) g_error_count++;
-                if (send_result != ISOTP_PROTOCOL_RESULT_OK) ESP_LOGW(BRIDGE_TAG, "[%d] ISO-TP send error: %d", number, send_result);
+                if (send_result != ISOTP_PROTOCOL_RESULT_OK) log_isotp_error(&send_errors, number, "send", send_result);
                 last_send_result = send_result;
             }
             if (receive_result != last_receive_result) {
-                if (receive_result != ISOTP_PROTOCOL_RESULT_OK) g_error_count++;
-                if (receive_result != ISOTP_PROTOCOL_RESULT_OK) ESP_LOGW(BRIDGE_TAG, "[%d] ISO-TP receive error: %d", number, receive_result);
+                if (receive_result != ISOTP_PROTOCOL_RESULT_OK) log_isotp_error(&receive_errors, number, "receive", receive_result);
                 last_receive_result = receive_result;
             }
 
