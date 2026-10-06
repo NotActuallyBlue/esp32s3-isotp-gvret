@@ -1,238 +1,204 @@
-# ISOTP-BLE
+# ISOTP-BLE Dongle
 
-A pocket CAN diagnostic dongle for VAG cars, built on a **LilyGo T-Display-S3** and an **Adafruit CAN Pal**. It is a
-BLE bridge for the Simos tuning apps, a standalone trouble code reader with a screen, an ELM327 adapter for generic
-OBD apps, and a SavvyCAN adapter, all in one firmware. It logs to its own flash, so you can diagnose a session
-afterwards without ever plugging a laptop into the car.
+A pocket diagnostic and logging dongle for VAG cars. It plugs into the OBD-II port, shows what it is doing on its own
+screen, and connects to your phone or laptop over Bluetooth, Wi-Fi or USB.
 
-Based on [Switchleg1/esp32-isotp-ble-bridge](https://github.com/Switchleg1/esp32-isotp-ble-bridge).
+**What it does**
 
-| | |
-|---|---|
-| **Simos BLE** | ISO-TP over BLE for Simos.app and Simos Tools (ECU/TCU logging, HSL, flashing) |
-| **Diag** | Scan every module for trouble codes, clear them, live data, VIN and readiness. Buttons and screen only, no phone |
-| **ELM327** | Looks like an ELM327 adapter over BLE and Wi-Fi, so Car Scanner, OBD Fusion and friends work |
-| **SavvyCAN** | GVRET adapter over USB serial |
-| **Always on** | On-device flash log with crash decoding, Wi-Fi firmware update with rollback, deep sleep when the car is off, a bench simulator to test it all without a car |
+* **Log and tune with the Simos apps.** A fast Bluetooth link for Simos.app and Simos Tools: live ECU and transmission
+  logging, ECU info and flashing.
+* **Read and clear trouble codes without a phone.** The built-in Diag mode scans every control unit, lists the faults on the
+  screen, shows live data and your VIN, and clears codes behind a confirmation step.
+* **Work with generic OBD apps.** ELM327 mode makes the dongle look like a standard ELM327 adapter over Bluetooth LE or Wi-Fi,
+  for apps that support those adapters.
+* **Capture CAN traffic on a computer.** A USB mode for SavvyCAN.
+* **Sleep when the car is off,** and update its own firmware over Wi-Fi.
 
-## Status
+**Contents:** [What you need](#what-you-need) · [Getting started](#getting-started) · [Choosing a mode](#choosing-a-mode) ·
+[Simos mode](#simos-mode) · [Diag mode](#diag-mode) · [ELM327 mode](#elm327-mode) · [SavvyCAN mode](#savvycan-mode) ·
+[Auto sleep](#auto-sleep) · [Updating the firmware](#updating-the-firmware) · [Troubleshooting](#troubleshooting) ·
+[Specifications](#specifications) · [Safety and legal](#safety-and-legal)
 
-Honest summary of what has been checked and how.
+---
 
-| Area | State |
-|---|---|
-| Simos BLE with Simos.app (ECU and TCU, HSL and mode 22) | Works in the car |
-| Simos BLE with Simos Tools, ECU HSL | Works in the car |
-| Simos Tools with the TCU enabled | Shows "Failed to create PID frame" in the car (see [Known issues](#known-issues)) |
-| Simos BLE, key on / engine off (the state needed for flashing) | Works: Simos Tools pulled ECU info over the dongle on a 2017 Mk7 GTI |
-| Diag scan, live data and vehicle info in the car | Works on a 2017 Mk7 GTI with key on / engine off: 16 modules found, VIN, live data and stored codes correct (found and fixed on the first runs: "test not completed" entries were counted as codes, and the code list could overlap when paging) |
-| Diag clear codes | Cleared 12 of 16 modules on the same car. The engine and transmission refuse every clear (UDS 0x14 in either session: "service not supported"; mode 04: "conditions not correct", because OBD-II lists no codes for them). The two engine entries were `HIST` only, not real faults. The ABS module (0x713) did not answer the clear. Not tried yet on a car with real stored engine codes |
-| ELM327, sleep, Wi-Fi update | Tested on the bench, against the simulator and desktop test tools. Screens and buttons checked by hand on the bench |
-| ELM327 against a real car, and with real phone apps | Not yet verified |
-| Wake from deep sleep by the BOOT button or the CAN bus | Not yet verified (a timer wake is) |
+## What you need
 
-## Hardware
+* A car with a standard OBD-II port that uses **CAN at 500 kbit/s**. Most cars sold in the US since 2008 do. The dongle was tested
+  on a 2017 Volkswagen Golf GTI (Mk7); other models are expected to work but have not been tested yet.
+* For Simos mode: **Simos.app** or **Simos Tools**, both made by their own developers.
+* For ELM327 mode: an app that supports **ELM327 over Bluetooth LE** or **ELM327 over Wi-Fi**.
+* For Diag mode: nothing. The dongle works on its own.
 
-* **LilyGo T-Display-S3** (ESP32-S3, 16 MB flash, 170x320 screen), bought from the maker.
-* **Adafruit CAN Pal** CAN transceiver, with its silent pin tied to ground so it is always in normal mode.
-* CAN at **500 kbit/s**, ESP32-S3 TWAI controller: **GPIO17 = TX, GPIO18 = RX**.
-* Buttons: **BOOT** (GPIO0) and **KEY** (GPIO14), the two on the board.
-* OBD-II connector: CAN-H pin 6, CAN-L pin 14, ground pin 4/5, battery +12 V pin 16 (always live) through a buck
-  converter down to 5 V. A prototype power stage is not an automotive one: if you build more than one, use proper
-  reverse-polarity and load-dump protection.
+Not supported: CAN FD and DoIP (found on the newest cars), K-line, and older cars that use the TP 2.0 protocol.
 
-Never connect USB while the dongle is plugged into a car you care about. The firmware and its tools are designed so
-that you never have to: update over Wi-Fi, and read the log at the desk.
+## Getting started
 
-## Quick start
+1. **Plug the dongle into the OBD-II port,** usually under the dashboard on the driver's side. It starts as soon as it has power and shows its
+   status on the screen.
+2. **Turn the ignition on** so the dash lights up. For flashing, use ignition on with the engine off. Some cars need a few seconds after the dash
+   lights up before the OBD port wakes.
+3. **Pick a mode** (see below). Out of the box the dongle starts in Simos mode.
+4. **Connect your app,** or use the buttons and screen in Diag mode.
 
-```bash
-pio run -t upload            # build and flash over USB (PlatformIO, ESP-IDF 6.1)
-pio test -e native           # host-side unit tests
-```
+Do not connect the dongle to a computer over USB while it is plugged into a car. Use Bluetooth or Wi-Fi in the car. USB is for
+SavvyCAN mode and bench use.
 
-Out of the box it starts in **Simos BLE** mode and advertises as `BLE_TO_ISOTP20`. Hold the BOOT button to change
-mode (below).
+## Choosing a mode
 
-## Modes
+The dongle has two buttons: **BOOT** and **KEY**. To change mode, hold **BOOT**. The screen shows what will happen when you let go, so
+release when you see the mode you want.
 
-| Mode | What it does | How you get there |
+| Hold BOOT for | The screen offers | What happens |
 |---|---|---|
-| **Simos BLE** (default) | BLE ISO-TP bridge for Simos.app / Simos Tools | saved |
-| **SavvyCAN USB** | GVRET adapter over USB serial | saved |
-| **Diag** | Standalone trouble code tool on the screen | saved |
-| **ELM327** | ELM327 emulation over BLE (`ISOTP-ELM327`) and Wi-Fi (`192.168.0.10:35000`) | saved |
-| **Bench sim** | The saved mode (Simos BLE, Diag or ELM327) against virtual modules instead of a car | one-shot |
-| **Wi-Fi update** | Access point and upload page for firmware updates | one-shot |
+| a quick tap | next page | cycles the status, bus monitor and firmware info pages |
+| 2 seconds | the next mode | switches to it and restarts |
+| every further 1.5 seconds | the mode after that | keep holding to move through Simos, SavvyCAN, Diag and ELM327 |
+| about 6.5 to 8 seconds | **Bench sim** | demo mode, no car needed (see below) |
+| about 8 to 9.5 seconds | **Wi-Fi update** | firmware update mode |
+| 9.5 seconds or more | **Cancel** | restarts in the same mode |
 
-One-shot modes are never saved: after any power cycle the dongle is back in its saved mode.
+The mode you pick is remembered. Bench sim and Wi-Fi update last for one session only: unplug the dongle and plug it back in to return
+to your mode.
 
-### BOOT button
+**Try it without a car.** Hold BOOT for about 7 seconds and release on **Bench sim**. The dongle then runs your chosen mode against
+simulated control units (an engine, a transmission, a gateway and an ABS module with a few made-up trouble codes), so you can try Diag
+mode or an app without a car. Nothing is sent on a car's CAN bus.
 
-| Press | Action |
+## Simos mode
+
+The default mode. The dongle appears over Bluetooth as **BLE_TO_ISOTP20**.
+
+1. Open Simos.app or Simos Tools and choose the dongle in its Bluetooth device list.
+2. Connect. The screen shows **CONNECTED** with the connection details (link speed and ECU and transmission response times).
+3. Use the app as normal: ECU info, logging and flashing.
+
+For flashing, keep the car in ignition on with the engine off, and make sure the car's battery and your phone or laptop are well
+charged.
+
+Compatibility notes:
+
+* **Simos.app** works with both the engine ECU and the transmission control unit (TCU).
+* **Simos Tools** works for ECU monitoring. Enabling TCU monitoring in Simos Tools currently shows "Failed to create PID frame".
+  Simos.app works with the TCU on the same dongle and car, so use it if you need the TCU.
+
+## Diag mode
+
+Diag mode turns the dongle into a standalone trouble code tool. You use the two buttons: **BOOT** moves to the next item, and **KEY**
+selects (a short press of KEY also goes back).
+
+**Scan codes** asks every control unit in the car for its trouble codes. It takes about six seconds and lists the modules that answered,
+with their codes.
+
+| What the screen shows | What it means |
 |---|---|
-| tap | next display page (status, bus monitor, firmware info), or the next item in Diag mode |
-| hold 2 s, release | switch to the next saved mode; each further 1.5 s you keep holding skips one more (Simos, SavvyCAN, Diag, ELM327) |
-| hold 6.5-8 s, release | bench simulator |
-| hold 8-9.5 s, release | Wi-Fi update |
-| hold 9.5 s+, release | cancel |
+| **ACT** | the fault is present right now |
+| **THIS** | it failed during the current drive |
+| **PEND** | seen once, not yet confirmed |
+| **STORED** | a confirmed fault that is saved in the module |
+| **MIL** | the warning lamp is requested |
+| **HIST** (dimmed) | the module only remembers that it failed at some point since the last clear; it is not counted as a fault |
 
-The screen shows what releasing will do while you hold the button.
+Some modules list codes in their own format. In the engine and transmission they are standard codes such as P0300; other modules may
+show a manufacturer-specific number. If a number does not look familiar, look it up for your car.
 
-### Simos BLE
+**Clear codes** asks you to confirm: **hold KEY for 2 seconds**. The dongle then asks every module to clear, reads each one back, and shows
+what is really left. A few things to know:
 
-Speaks the protocol Simos.app and Simos Tools use: handshake, per-link settings (STmin, persist delays), single and
-multi-frame requests, split packets for long requests, and **persist mode**, where the dongle polls the ECU and TCU
-itself and streams timestamped replies for high-rate logging.
+* Clearing also resets the readiness monitors and erases freeze-frame data, and the car must be in ignition on.
+* A code that is still present comes straight back.
+* Some modules refuse to clear. The screen then shows a short reason such as `NOT SUPP` (not supported), `NOT NOW` (conditions not met),
+  `SECURITY` or `SESSION`.
+* **HIST** entries are not faults, and a module may keep them when asked to clear.
 
-Notes from real cars: the TCU asks for 5 ms between frames and the dongle honours it (an STmin override from the
-app only ever lengthens the gap); ECU replies come back in about 30-45 ms; the connection asks the phone for a 7.5-15 ms
-interval and a 251-byte data length.
+**Live data** shows engine speed, vehicle speed, coolant temperature, engine load, throttle, intake air temperature, manifold pressure
+and the control module voltage.
 
-### Diag
+**Vehicle info** shows the VIN, the warning lamp state and the readiness monitors.
 
-Two buttons: **BOOT** (tap = next) and **KEY** (tap = select / back).
+If the scan finds nothing, the screen says why:
 
-* **Scan codes** asks the OBD addresses 0x7E0-0x7E7 and the VAG range 0x700-0x76F (answers on request + 0x6A),
-  about 6 s. Modules that speak UDS are read with service 0x19 and status mask 0xAF, so only real faults come back
-  (failed, pending, confirmed, failed since last clear, lamp requested). VAG modules also list every code they
-  monitor with the "test not completed" bits set, and those are not shown.
-  Entries that only say "failed at some point since the last clear" (status 0x20, shown as `HIST`) are history, not
-  faults: the module does not hold them as stored, pending or active, OBD-II does not list them, and the headline
-  count and the clear result leave them out. They are shown dimmed so you can see them. OBD-only modules fall back to modes 03 and
-  07. Codes are listed per module with their status (ACT / PEND / STORED / MIL) and paged to fit the screen. Outside the
-  engine and transmission, a module's three-byte code can be a VAG-specific number rather than a standard SAE code.
-* **Clear codes** needs you to **hold KEY for 2 s**. It sends UDS 0x14 (or mode 04 to OBD-only modules) to every
-  module that answered. Engine and transmission control units on a Mk7 refuse UDS 0x14 ("service not supported"), so
-  for those the firmware retries with OBD mode 04, which clears their emission related codes. If a module still refuses
-  (on the test car the engine and transmission answered mode 04 with "conditions not correct"), it opens the extended
-  diagnostic session, clears there and returns to the default session. It then reads every module back and shows what
-  is really stored now. A code that is still active comes straight back, and some
-  modules (such as the ABS on the test car) may not accept a clear without a diagnostic session. Clearing also resets readiness
-  monitors and erases freeze frames, and needs ignition on.
-* **Live data** shows engine speed, speed, coolant, load, throttle, intake temperature, MAP and module voltage.
-* **Vehicle info** shows the VIN, MIL state and readiness monitors.
+* **BUS SILENT:** no traffic was seen at all, so the car's network is asleep. Turn the ignition on, wait a few seconds and try again.
+  Some cars need the engine running before the OBD port wakes.
+* **BUS IS ALIVE:** the car is talking but no module answered. Check that the dongle is firmly in the port.
 
-If nothing answers, the screen says why: **BUS SILENT** means no frames at all were seen, so the car's network is
-asleep (some cars need the engine running, not just ignition on, before the OBD port wakes up); **BUS IS ALIVE** means
-traffic was seen but no module replied. The CAN controller state (`OK`, `ERROR PASSIVE`, `BUS OFF`) is shown too, and
-both are written to the flash log.
+## ELM327 mode
 
-The scan is read-only. Every module, code and clear result is written to the flash log, including each code's
-five-digit VAG fault number (P0300 = 16684).
+In this mode the dongle behaves like a standard ELM327 adapter, so apps that support those adapters can connect to it.
 
-### ELM327
+* **Over Bluetooth LE:** connect to **ISOTP-ELM327** from the app's adapter list.
+* **Over Wi-Fi:** join the Wi-Fi network **ISOTP-ELM327** (the password is shown on the dongle's screen), then set the app to connect to
+  `192.168.0.10` on port `35000`.
 
-Connect over BLE (name `ISOTP-ELM327`) or join the Wi-Fi network shown on the screen (the password is generated once
-and kept in NVS) and open `192.168.0.10:35000`. Both BLE layouts used by ELM327 adapters are offered (service
-0xFFF0 with notify 0xFFF1 and write 0xFFF2, and 0xFFE0 with 0xFFE1).
+The screen shows the Wi-Fi password, whether a phone is connected, and the last command received.
 
-Supported: ISO 15765-4 CAN 11 bit / 500 kbit/s (protocol 6, also as auto), requests to 0x7DF or a specific address
-(`ATSH`), response filter (`ATCRA`), headers and spaces, multi-frame answers with the chip's numbered-line format,
-`ATRV` (read from the ECU's module voltage; there is no sense line). Not supported: other protocols (`ATSP7` and
-friends answer `?`), raw frame mode (`ATCAF0`), monitor mode (`ATMA`). Custom flow control commands are accepted and
-ignored.
+It supports the common CAN OBD-II protocol (ISO 15765-4, 11-bit, 500 kbit/s) and the usual ELM327 commands. It does not support other
+protocols, raw frame mode or monitor mode. Apps differ, so if one does not connect, check that it supports your adapter type (Bluetooth LE
+or Wi-Fi ELM327).
 
-The ELM327 and Simos BLE interfaces are open to any client in range, as on any dongle of this kind: anyone who can
-connect can send UDS requests to the car.
+## SavvyCAN mode
 
-### Bench simulator
+For capturing and analysing CAN traffic on a computer, and meant for bench use. Switch to SavvyCAN mode, connect the dongle to the computer
+over USB, and add it in SavvyCAN as a **GVRET** device (serial, 250000 baud).
 
-Hold BOOT 6.5-8 s and the saved mode runs against four virtual modules instead of the CAN bus: an engine ECU (0x7E0)
-and a TCU (0x7E1), plus a gateway (0x710) and ABS (0x713) for the scan. Each has a few trouble codes that really clear.
-The simulated TCU is OBD-only and insists on 10 ms between frames, which catches frame-spacing regressions. Nothing
-touches the bus, so it is safe to use anywhere.
+## Auto sleep
 
-### Sleep
+The OBD-II port has power all the time, so to avoid draining the car's battery the dongle goes into a low-power sleep after **10 minutes**
+with no CAN traffic, no connected phone or app, and no button presses. Driving the car, connecting an app or pressing BOOT wakes it. It does
+not sleep while connected over USB, or in SavvyCAN, Bench sim or Wi-Fi update modes.
 
-The OBD port is live all the time. After 10 minutes with no CAN frames, no connected phone and no button press, the
-dongle goes into deep sleep. A frame on the bus or the BOOT button wakes it, and it boots normally. It never sleeps
-while USB is connected, and not in SavvyCAN, bench or update modes. Change the time with the NVS key `sleep_min`
-in namespace `dongle_cfg` (0 = never).
-
-Only the ESP32-S3 sleeps. The buck converter and the CAN transceiver keep drawing current, so measure the whole
-dongle in sleep before you promise anyone weeks of parking.
+Sleep lowers the dongle's power use but does not turn it off completely. **If you leave the car parked for days or weeks, unplug the
+dongle.**
 
 ## Updating the firmware
 
-* **USB:** `pio run -t upload`
-* **Wi-Fi:** put the dongle in Wi-Fi update mode, join the network shown on its screen (the password is random and
-  only appears there), then run `python3 tools/ota_update.py` or open <http://192.168.4.1> and pick `firmware.bin`.
-  An update is kept only after the new image has run for 20 s, otherwise the bootloader rolls back to the previous
-  one. Resetting or unplugging within those 20 s therefore reverts the update, by design.
+You can update over Wi-Fi without any cable.
 
-## Logs and crashes
+1. Hold BOOT for about 8 to 9.5 seconds and release on **Wi-Fi update**.
+2. On your phone or computer, join the Wi-Fi network shown on the dongle's screen and enter the password shown there.
+3. Open `http://192.168.4.1` in a browser, choose the `firmware.bin` file you were given, and upload it.
+4. The dongle restarts by itself. **Wait about 30 seconds before unplugging it.** It checks the new firmware as it starts, and goes back to
+   the previous version automatically if the new one does not start properly.
 
-Everything the firmware logs is also written to flash (`log` partition, the last 6 boots). Read it back, with
-crash reports decoded to source lines, using:
+## Troubleshooting
 
-```bash
-python3 tools/read_log.py
-```
-
-Plugging the dongle into the PC boots it, so the car session is the one *before* the boot you just caused. Wait about
-20 s after plugging in before reading (opening the serial port resets the dongle).
-
-Useful lines to look for:
-
-* `Persist: Session: persist on for X ms | ECU: ... first after a ms | TCU: ...` timing of each persist session.
-* `Flow control for 0x7E1: BS .. STmin .. -> using ..` what a module asks for between frames.
-* `Main: Heap: free .., lowest ever ..` memory health, every 30 s.
-* `[CRASH]` lines, decoded to function and source line.
-
-Per-frame lines are plentiful, so they are limited to a fixed budget per boot after the first PID is registered.
-
-## Tests
-
-* **Host tests:** the ISO-TP engine, the OBD/UDS decoders and the ELM327 interpreter are plain C with unit tests:
-  `pio test -e native` (28 tests).
-* **Over BLE from a desktop** (needs `pip install bleak` and a Bluetooth adapter):
-  `python3 tools/ble_probe.py all` speaks the Simos protocol like the apps do (handshake, settings, single and
-  multi-frame and 69-byte requests, split packets, persist streaming and the "create PID" timing check), and
-  `python3 tools/elm_probe.py ble` (or `tcp` after joining the dongle's Wi-Fi) runs an ELM327 session like a phone
-  app would. Put the dongle in bench mode first.
-* **Test builds**, set with `PLATFORMIO_BUILD_FLAGS` (never use these in a car, flash the normal build afterwards):
-  `-DFORCE_BENCH_SIM`, `-DFORCE_WIFI_UPDATE`, `-DFORCE_MODE=2` (Diag) or `=3` (ELM327) without saving,
-  `-DDIAG_SELFTEST` (Diag drives its own screens and logs the result), `-DELM_LOG_PASSWORD`, and
-  `-DPOWER_TEST=40` (sleep after 40 s with USB ignored, wake by timer after 15 s).
-
-## Source layout
-
-| Path | What |
+| Problem | Try this |
 |---|---|
-| `main/main.c`, `mode_mgr.c` | start-up, saved and one-shot modes, button menu |
-| `main/isotp.c`, `isotp_bridge.c` | ISO-TP engine and the Simos BLE bridge (processing, send queue, settings) |
-| `main/ble_server.c`, `persist.c` | Simos GATT service (0xABF0) and persist mode |
-| `main/twai.c`, `canstats.c` | CAN driver and bus statistics |
-| `main/diag.c`, `diag_can.c`, `obd_codec.c` | Diag mode, the tester-side ISO-TP layer, DTC/PID decoding |
-| `main/elm327.c`, `elm_mode.c`, `elm_ble.c`, `elm_wifi.c` | ELM327 interpreter and its BLE and Wi-Fi transports |
-| `main/bench_sim.c` | virtual ECU, TCU, gateway and ABS |
-| `main/display.c` | single-task renderer (strips, pages, detail rows) |
-| `main/flashlog.c` | rotating flash log, crash summary |
-| `main/ota_update.c`, `power_mgr.c`, `gvret.c` | Wi-Fi update, deep sleep, SavvyCAN |
-| `tools/` | log reader, OTA uploader, BLE and ELM327 probes |
-| `test/` | host-side unit tests |
+| The dongle does not show in the app | Make sure no other phone is connected to it. Unplug it, plug it back in, and look for **BLE_TO_ISOTP20** (Simos mode) or **ISOTP-ELM327**. |
+| Nothing answers, or the screen says BUS SILENT | Turn the ignition on and wait a few seconds. Some cars need the engine running before the OBD port wakes. |
+| A code comes straight back after clearing | The fault is still present. Fix the cause, then clear again. |
+| A module says NOT SUPP, NOT NOW, SECURITY or SESSION when clearing | It refused the request. Other tools may use a method this dongle does not support. |
+| The screen is dark | It switches off after a while. Press BOOT to wake it. |
+| The dongle does not respond after an update | Wait 30 seconds. If it is still unresponsive, unplug it and plug it back in; it starts the previous firmware if the new one failed. |
+| Simos Tools shows "Failed to create PID frame" with the TCU enabled | Use Simos.app for TCU logging, or turn the TCU off in Simos Tools. |
 
-Flash is 16 MB: two 2 MB OTA slots, a core dump partition and the log partition (`partitions.csv`). Settings (NVS)
-keep their address across updates.
+## Specifications
 
-## Known issues
+| | |
+|---|---|
+| Connection to the car | OBD-II port, CAN at 500 kbit/s (11-bit) |
+| Power | 12 V from the OBD-II port |
+| Wireless | Bluetooth LE and a 2.4 GHz Wi-Fi access point |
+| USB | USB-C, for SavvyCAN mode and bench use |
+| Display | 1.9 inch colour screen, 170 x 320 |
+| Controls | BOOT and KEY buttons |
+| Modes | Simos, Diag, ELM327, SavvyCAN, plus Bench sim and Wi-Fi update |
+| Protocols | ISO-TP (ISO 15765-2), UDS (ISO 14229), OBD-II (SAE J1979), GVRET |
 
-* **Simos Tools with the TCU enabled shows "Failed to create PID frame" in a loop.** With the same dongle and car,
-  Simos.app polls the ECU and TCU without trouble, and Simos Tools works with ECU HSL alone. The logs show the TCU
-  answering every request the app sent, within the app's time window, so this looks like Simos Tools' own handling of
-  TCU frames. It is not proven. A possible workaround (hand the app the previous TCU reply when persist starts) has
-  not been built because it makes the first sample up to a second stale.
-* The Simos BLE and ELM327 interfaces have no authentication.
-* Only CAN 11 bit at 500 kbit/s is supported. No CAN FD, DoIP or K-line.
+## Safety and legal
 
-## Credits and licence
+* Reading trouble codes and live data is safe. **Clearing codes resets readiness monitors,** and anything that writes to a control unit
+  (including flashing) can damage it or void a warranty. Use the dongle on your own vehicle and at your own risk. Keep the battery
+  charged and the ignition on, with the engine off, during flashing.
+* **Do not connect USB to a computer while the dongle is in the car.**
+* The Bluetooth connection is not password protected, so anyone within range could connect to the dongle while it is powered. The Wi-Fi
+  networks use a password, which is shown on the dongle's screen. Unplug the dongle when you are not using it.
+* Modifying a vehicle's emissions equipment or its emissions-related software can be illegal for road use where you live. This dongle only
+  reports what a control unit says; you are responsible for complying with local law.
+* Volkswagen, Audi, Golf, GTI, ELM327, Bluetooth and the other names used here belong to their owners. This product is not affiliated with or
+  endorsed by them. Simos.app and Simos Tools are separate products by their own developers.
 
-Built on [esp32-isotp-ble-bridge](https://github.com/Switchleg1/esp32-isotp-ble-bridge) by Switchleg1, and uses the
-protocol of Simos Tools and Simos.app by Tycho ([TheFlashBold](https://github.com/TheFlashBold)). This repository does
-not contain a licence file yet: check the upstream project's terms before you redistribute anything built from it.
+## Credits
 
-## Disclaimer
+Built on [esp32-isotp-ble-bridge](https://github.com/Switchleg1/esp32-isotp-ble-bridge) by Switchleg1.
 
-Reading trouble codes is harmless. Clearing them resets readiness monitors, and anything that writes to a control unit
-can brick it or void a warranty. Use this on your own car, at your own risk.
+Developers: see [DEVELOPMENT.md](DEVELOPMENT.md) for building, testing, logs and the source layout.
