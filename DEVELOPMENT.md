@@ -35,7 +35,9 @@ the desk.
 SavvyCAN mode streams GVRET over a TCP server on port 23 of the dongle's own access point (`ISOTP-SAVVYCAN`, 192.168.0.10, same
 WPA2 password as ELM327), and over USB serial for bench use. It is the only reader of CAN frames in that mode (the Simos receive
 task is not started), writes to USB only while a host is attached, and batches frames per Wi-Fi packet. The command parser is a
-byte-wise state machine, so commands and frames split across TCP segments work. SavvyCAN mode also runs under the bench simulator.
+byte-wise state machine, so commands and frames split across TCP segments work. USB writes are skipped for half a second after a few
+writes that do not fit, so a PC that powers the dongle without opening the serial port cannot stall the Wi-Fi stream. SavvyCAN mode also
+runs under the bench simulator, which adds three cyclic test frames (0x100 every 10 ms, 0x200 every 20 ms, 0x300 every 100 ms).
 
 One-shot modes are never saved (RTC memory request, valid only after a software restart): after any power cycle the dongle is
 back in its saved mode.
@@ -168,7 +170,7 @@ What has been checked, and how.
 | Simos BLE, key on / engine off (the state needed for flashing) | Works: Simos Tools pulled ECU info over the dongle on a 2017 Mk7 GTI |
 | Diag scan, live data and vehicle info | Works on a 2017 Mk7 GTI, key on / engine off: 16 modules found, VIN, live data and stored codes correct |
 | Diag clear codes | Cleared 12 of 16 modules on the same car. The engine and transmission refuse every clear (UDS 0x14 in either session: "service not supported"; mode 04: "conditions not correct", because OBD-II lists no codes for them); the two engine entries were `HIST` only. The ABS module (0x713) did not answer the clear. Not tried yet on a car with real stored engine codes |
-| SavvyCAN over Wi-Fi | Tested on the bench with the simulator and `tools/gvret_probe.py` (9 checks); not yet tried with SavvyCAN itself or on a real bus |
+| SavvyCAN over Wi-Fi | Tested on the bench with the simulator and `tools/gvret_probe.py` (10 checks, also with the dongle powered from a PC that is not reading its serial port); not yet tried with SavvyCAN itself or on a real bus |
 | ELM327, sleep, Wi-Fi update | Tested on the bench, against the simulator and desktop test tools. Screens and buttons checked by hand on the bench |
 | ELM327 against a real car, and with real phone apps | Not yet verified |
 | Wake from deep sleep by the BOOT button or the CAN bus | Not yet verified (a timer wake is) |

@@ -147,6 +147,11 @@ For capturing and analysing raw CAN traffic with [SavvyCAN](https://www.savvycan
 
 The dongle reads at 500 kbit/s. Frames you send from SavvyCAN go out on the car's bus, so only send frames you understand.
 
+**Try it without a car.** Power the dongle from any USB port or charger, hold BOOT for about 7 seconds with SavvyCAN as your mode and release on
+**Bench sim**, and connect as above over Wi-Fi. SavvyCAN then shows three test messages that repeat (IDs `0x100` every 10 ms, `0x200` every
+20 ms and `0x300` every 100 ms), and the simulated control units answer requests: for example, send ID `0x7DF` with the data `02 01 00` and the
+engine and transmission reply on `0x7E8` and `0x7E9`.
+
 At a desk you can also connect the dongle to the computer over USB and add it in SavvyCAN as a serial **GVRET** device (250000 baud). Do not do
 this while the dongle is in a car.
 

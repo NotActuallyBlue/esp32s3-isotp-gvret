@@ -38,12 +38,26 @@ static bool             bench_mode;
 static QueueHandle_t    bench_queue;
 
 // ---------------------------------------------------------------- output
-// USB is only written while a computer is actually attached: with nothing attached every write would wait for its timeout
-// and stall the capture.
+// USB is only written while a computer is attached, and only while something is reading it. A computer that powers the dongle
+// but has not opened the serial port leaves the transmit buffer full: every write would then wait for its timeout and stall the
+// capture (and the Wi-Fi stream with it). After a few writes that do not fit, USB is skipped for half a second and then tried again.
+static int64_t usb_skip_until_us;
+static int     usb_failures;
+
 static void write_usb(const uint8_t *data, size_t len)
 {
-    if (usb_serial_jtag_is_connected()) {
-        usb_serial_jtag_write_bytes(data, len, pdMS_TO_TICKS(20));
+    if (!usb_serial_jtag_is_connected()) return;
+    int64_t now = esp_timer_get_time();
+    if (now < usb_skip_until_us) return;
+
+    int written = usb_serial_jtag_write_bytes(data, len, pdMS_TO_TICKS(2));
+    if (written < (int)len) {
+        if (++usb_failures >= 3) {
+            usb_skip_until_us = now + 500000;
+            usb_failures = 0;
+        }
+    } else {
+        usb_failures = 0;
     }
 }
 
@@ -74,11 +88,13 @@ static void can_transmit(uint32_t id, bool extended, uint8_t dlc, const uint8_t 
     twai_transmit(&frame, pdMS_TO_TICKS(10));
 }
 
+static volatile uint32_t bench_dropped;
+
 static void bench_sink(uint32_t id, const uint8_t *data, uint16_t len)
 {
     bench_frame_t f = { .id = id, .len = (uint8_t)(len > 8 ? 8 : len) };
     memcpy(f.data, data, f.len);
-    xQueueSend(bench_queue, &f, 0);
+    if (xQueueSend(bench_queue, &f, 0) != pdTRUE) bench_dropped++;
 }
 
 static bool receive_frame(twai_message_t *out, TickType_t wait)
@@ -252,6 +268,26 @@ static void gvret_usb_task(void *arg)
     }
 }
 
+// ---------------------------------------------------------------- bench traffic
+// With no car there would be nothing to look at, so the bench simulator also broadcasts three test frames, the way a real bus
+// has fast and slow cyclic messages: 0x100 every 10 ms, 0x200 every 20 ms and 0x300 every 100 ms. Byte 0 is a counter,
+// byte 1 a slow ramp and byte 2 a triangle wave, so graphs in SavvyCAN have something to draw.
+static void bench_traffic_task(void *arg)
+{
+    uint32_t tick = 0;
+    TickType_t last = xTaskGetTickCount();
+    while (1) {
+        vTaskDelayUntil(&last, pdMS_TO_TICKS(10));
+        tick++;
+        uint8_t tri = (uint8_t)((tick % 100) < 50 ? (tick % 100) * 5 : (100 - (tick % 100)) * 5);
+        uint8_t ramp = (uint8_t)(tick / 10);
+        uint8_t data[8] = { (uint8_t)tick, ramp, tri, 0, 0, 0, 0, (uint8_t)(tick >> 8) };
+        bench_sink(0x100, data, 8);
+        if (tick % 2 == 0)  bench_sink(0x200, data, 8);
+        if (tick % 10 == 0) bench_sink(0x300, data, 8);
+    }
+}
+
 // ---------------------------------------------------------------- screen
 static const char *can_state_text(uint16_t *color)
 {
@@ -291,6 +327,12 @@ static void gvret_screen_task(void *arg)
         };
         display_set_details("SAVVYCAN", COLOR_CYAN, d, sizeof(d) / sizeof(d[0]));
         display_set_status("SAVVYCAN", (net || usb) ? "CONNECTED" : "READY", (net || usb) ? COLOR_GREEN : COLOR_CYAN);
+        static uint32_t last_dropped, last_tx;
+        if (bench_dropped != last_dropped || g_tx_count != last_tx) {
+            ESP_LOGI(GVRET_TAG, "frames sent to the bus %lu, bench queue overflows %lu", (unsigned long)g_tx_count, (unsigned long)bench_dropped);
+            last_dropped = bench_dropped;
+            last_tx = g_tx_count;
+        }
         vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
@@ -304,9 +346,10 @@ void gvret_start(bool bench)
 {
     bench_mode = bench;
     if (bench) {
-        bench_queue = xQueueCreate(64, sizeof(bench_frame_t));
+        bench_queue = xQueueCreate(256, sizeof(bench_frame_t));
         bench_sim_set_sink(bench_sink);
         bench_sim_start();
+        xTaskCreate(bench_traffic_task, "gvret_bench", 3072, NULL, 3, NULL);
     }
 
     // USB stays available for bench use with SavvyCAN

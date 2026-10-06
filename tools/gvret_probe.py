@@ -58,9 +58,33 @@ def tx_frame(ident, data):
     return bytes([0xF1, 0x00]) + struct.pack("<I", ident) + bytes([0, len(data)]) + data + b"\x00"
 
 
+REPLY_LEN = {0x01: 6, 0x06: 7, 0x07: 6, 0x09: 6, 0x0C: 3, 0x0D: 3}
+
+
+def find_reply(buf, cmd):
+    """The answer to one command inside a stream that may also carry captured frames (F1 00 ...)."""
+    i = 0
+    while i + 2 <= len(buf):
+        if buf[i] == 0xF1:
+            c = buf[i + 1]
+            if c == 0x00:
+                if i + 11 > len(buf):
+                    break
+                i += 11 + (buf[i + 10] & 0x0F)
+                continue
+            n = REPLY_LEN.get(c)
+            if n and i + n <= len(buf):
+                if c == cmd:
+                    return bytes(buf[i:i + n])
+                i += n
+                continue
+        i += 1
+    return b""
+
+
 def command(sock, cmd, expect_len):
     sock.sendall(bytes([0xF1, cmd]))
-    return read_for(sock, 0.4)[:expect_len] if expect_len else read_for(sock, 0.4)
+    return find_reply(read_for(sock, 0.5), cmd)
 
 
 def main():
@@ -89,15 +113,25 @@ def main():
     s.sendall(b"\xF1")
     time.sleep(0.3)
     s.sendall(b"\x0C")
-    r = read_for(s, 0.4)
+    r = find_reply(read_for(s, 0.5), 0x0C)
     check("a command split over two segments is understood", r[:3] == bytes([0xF1, 0x0C, 1]), r.hex())
+
+    # The bench simulator broadcasts test frames, so a capture has something in it
+    seen = {}
+    buf = read_for(s, 1.0)
+    frames, _ = split_frames(buf)
+    for i, d in frames:
+        seen[i] = seen.get(i, 0) + 1
+    check("bench traffic streams: 0x100 about every 10 ms, 0x200 every 20 ms, 0x300 every 100 ms",
+          seen.get(0x100, 0) >= 80 and seen.get(0x200, 0) >= 40 and seen.get(0x300, 0) >= 8,
+          f"in 1 s: 0x100 x{seen.get(0x100, 0)}, 0x200 x{seen.get(0x200, 0)}, 0x300 x{seen.get(0x300, 0)}")
 
     # Transmit a functional OBD request; the simulated ECU and TCU answer on 0x7E8 / 0x7E9
     read_for(s, 0.3)
     s.sendall(tx_frame(0x7DF, [0x02, 0x01, 0x00]))
     buf = read_for(s, 0.8)
     frames, _ = split_frames(buf)
-    ids = {i for i, d in frames if len(d) > 2 and d[1] == 0x41}
+    ids = {i for i, d in frames if i in (0x7E8, 0x7E9) and len(d) > 2 and d[1] == 0x41}
     check("a transmitted request is answered by both simulated modules", ids == {0x7E8, 0x7E9}, f"answers from {sorted(hex(i) for i in ids)}")
 
     # The same request, written in three pieces
@@ -106,7 +140,7 @@ def main():
         s.sendall(part)
         time.sleep(0.15)
     frames, _ = split_frames(read_for(s, 0.8))
-    ids = {i for i, d in frames if len(d) > 2 and d[1] == 0x41 and d[2] == 0x05}
+    ids = {i for i, d in frames if i in (0x7E8, 0x7E9) and len(d) > 2 and d[1] == 0x41 and d[2] == 0x05}
     check("a transmit frame split into three segments still goes out", ids == {0x7E8, 0x7E9}, f"answers from {sorted(hex(i) for i in ids)}")
 
     # A steady stream in both directions (one request every 15 ms, like a logger polling an ECU): nothing is lost
