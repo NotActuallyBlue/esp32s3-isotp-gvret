@@ -178,6 +178,29 @@ static void log_dtcs(const module_t *m)
     }
 }
 
+// Log only: what the module says through the OBD-II services, to compare with the UDS list. Mode 04 can only act on
+// what shows up here.
+static void log_obd_view(const module_t *m)
+{
+    static const uint8_t m03 = 0x03, m07 = 0x07, m0a = 0x0A;
+    static const uint8_t pid01[] = { 0x01, 0x01 };
+    obd_dtc_t tmp[MAX_MODULE_DTCS];
+    int stored = -1, pending = -1, permanent = -1;
+
+    int n = request(m->tx, &m03, 1, 100);
+    if (n > 0 && resp[0].data[0] == 0x43) stored = obd_parse_mode_dtcs(resp[0].data, resp[0].len, tmp, MAX_MODULE_DTCS);
+    n = request(m->tx, &m07, 1, 100);
+    if (n > 0 && resp[0].data[0] == 0x47) pending = obd_parse_mode_dtcs(resp[0].data, resp[0].len, tmp, MAX_MODULE_DTCS);
+    n = request(m->tx, &m0a, 1, 100);
+    if (n > 0 && resp[0].data[0] == 0x4A) permanent = obd_parse_mode_dtcs(resp[0].data, resp[0].len, tmp, MAX_MODULE_DTCS);
+    n = request(m->tx, pid01, sizeof(pid01), 100);
+    int mil = -1, count = -1;
+    if (n > 0 && resp[0].len >= 6 && resp[0].data[0] == 0x41) { mil = resp[0].data[2] >> 7; count = resp[0].data[2] & 0x7F; }
+
+    ESP_LOGI(DIAG_TAG, "  %s through OBD-II: stored %d, pending %d, permanent %d (-1 = no answer), MIL %d, confirmed count %d",
+             m->name, stored, pending, permanent, mil, count);
+}
+
 // Read trouble codes of one module that answered. Returns false if it did not answer at all.
 static bool read_module(module_t *m)
 {
@@ -303,6 +326,7 @@ static void scan(void)
         ESP_LOGI(DIAG_TAG, "Module 0x%03lX (%s) answered on 0x%03lX: %s, %u code(s)", (unsigned long)m->tx, m->name,
                  (unsigned long)m->rx, m->uds ? "UDS" : (m->denied ? "no access" : "OBD"), m->dtc_count);
         log_dtcs(m);
+        if (is_obd_physical(m->tx) && m->uds) log_obd_view(m);
         module_count++;
     }
 
@@ -490,6 +514,21 @@ static const char *nrc_text(uint8_t nrc, char *buf, size_t size)
     return buf;
 }
 
+static void log_answer(const char *what, const char *name, int n)
+{
+    if (n <= 0) {
+        ESP_LOGW(DIAG_TAG, "%s %s: no answer", name, what);
+        return;
+    }
+    char hex[3 * 12 + 1] = "";
+    for (int i = 0; i < resp[0].len && i < 12; i++) {
+        char b[4];
+        snprintf(b, sizeof(b), "%02X ", resp[0].data[i]);
+        strlcat(hex, b, sizeof(hex));
+    }
+    ESP_LOGW(DIAG_TAG, "%s %s: answered %s(%u bytes, from 0x%03lX)", name, what, hex, resp[0].len, (unsigned long)resp[0].id);
+}
+
 static void set_clear_result(module_t *m, int n, uint8_t positive)
 {
     if (n <= 0) {
@@ -517,16 +556,16 @@ static int clear_in_extended_session(module_t *m)
     static const uint8_t normal[] = { 0x10, 0x01 };
 
     int n = request(m->tx, extended, sizeof(extended), 300);
+    log_answer("extended session request", m->name, n);
     if (n <= 0 || resp[0].data[0] != 0x50) {
-        ESP_LOGW(DIAG_TAG, "%s: extended session not accepted", m->name);
         return n > 0 ? n : 0;
     }
     n = request(m->tx, clear_uds, sizeof(clear_uds), 500);
-    uint8_t first = n > 0 ? resp[0].data[0] : 0;
+    log_answer("clear in the extended session", m->name, n);
     diag_response_t keep = resp[0];
-    request(m->tx, normal, sizeof(normal), 300);
+    int back = request(m->tx, normal, sizeof(normal), 300);
+    log_answer("return to the default session", m->name, back);
     resp[0] = keep;                                     // report the clear's answer, not the session change's
-    (void)first;
     return n;
 }
 
@@ -540,12 +579,14 @@ static void clear_module(module_t *m)
     uint8_t positive = use_uds ? 0x54 : 0x44;
 
     int n = request(m->tx, req, len, 500);
+    log_answer(use_uds ? "UDS clear (14 FF FF FF)" : "OBD clear (mode 04)", m->name, n);
 
     // The engine and transmission control units of a Mk7 answer UDS 0x14 with "service not supported"; they should accept
     // the OBD-II clear (mode 04) for their emission related codes. Try it before giving up.
     if (use_uds && is_obd_physical(m->tx) && is_negative(n, 0x11, 0x12)) {
         ESP_LOGW(DIAG_TAG, "%s refused UDS clear (NRC %02X), trying OBD mode 04", m->name, resp[0].data[2]);
         n = request(m->tx, &clear_obd, 1, 500);
+        log_answer("OBD clear (mode 04)", m->name, n);
         positive = 0x44;
     }
 
