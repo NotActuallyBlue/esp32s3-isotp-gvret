@@ -47,6 +47,7 @@ typedef struct {
     bool        request_dropped;        // the dongle sent frames faster than st_min_us: ignore this request
     bool        obd;                    // answers the functional OBD-II address 0x7DF as well
     bool        no_uds_dtc;             // refuses UDS 0x19 (an OBD-only module): codes come from modes 03/07
+    bool        no_uds_clear;           // reads codes with UDS but refuses UDS 0x14, like a Mk7 engine ECU: only OBD mode 04 clears
     sim_dtc_t   dtcs[SIM_MAX_DTCS];
     uint8_t     dtc_count;
 } sim_node_t;
@@ -56,7 +57,7 @@ static bench_sim_sink_t sim_sink = NULL;
 static bool             sim_active = false;
 static QueueHandle_t    sim_queue = NULL;
 static sim_node_t       sim_nodes[SIM_NODE_COUNT] = {
-    { .name = "ECU", .request_id = 0x7E0, .response_id = 0x7E8, .st_min_us = 0, .obd = true },
+    { .name = "ECU", .request_id = 0x7E0, .response_id = 0x7E8, .st_min_us = 0, .obd = true, .no_uds_clear = true },
     // A DSG-like module: asks for 10 ms between consecutive frames and silently drops a request whose frames
     // come faster. This reproduces the "flow control, then silence" behaviour seen on the real TCU.
     { .name = "TCU", .request_id = 0x7E1, .response_id = 0x7E9, .st_min_us = 10000, .obd = true, .no_uds_dtc = true },
@@ -162,6 +163,7 @@ static uint16_t sim_build_response(int node, const uint8_t *req, uint16_t len, u
         return pos;
     }
     case 0x14:  // ClearDiagnosticInformation
+        if (sim_nodes[node].no_uds_clear) { out[0] = 0x7F; out[1] = sid; out[2] = 0x11; return 3; }
         sim_nodes[node].dtc_count = 0;
         out[0] = 0x54;
         return 1;

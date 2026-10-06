@@ -494,11 +494,22 @@ static void clear_module(module_t *m)
 {
     static const uint8_t clear_uds[] = { 0x14, 0xFF, 0xFF, 0xFF };
     static const uint8_t clear_obd = 0x04;
-    const uint8_t *req = m->uds || !is_obd_physical(m->tx) ? clear_uds : &clear_obd;
-    uint16_t len = req == clear_uds ? sizeof(clear_uds) : 1;
-    uint8_t positive = req == clear_uds ? 0x54 : 0x44;
+    bool use_uds = m->uds || !is_obd_physical(m->tx);
+    const uint8_t *req = use_uds ? clear_uds : &clear_obd;
+    uint16_t len = use_uds ? sizeof(clear_uds) : 1;
+    uint8_t positive = use_uds ? 0x54 : 0x44;
 
     int n = request(m->tx, req, len, 500);
+
+    // The engine and transmission control units of a Mk7 answer UDS 0x14 with "service not supported"; they do accept the
+    // OBD-II clear (mode 04), which clears their emission related codes. Try it before giving up.
+    if (use_uds && is_obd_physical(m->tx) && n > 0 && resp[0].len >= 3 && resp[0].data[0] == 0x7F &&
+        (resp[0].data[2] == 0x11 || resp[0].data[2] == 0x12)) {
+        ESP_LOGW(DIAG_TAG, "%s refused UDS clear (NRC %02X), trying OBD mode 04", m->name, resp[0].data[2]);
+        n = request(m->tx, &clear_obd, 1, 500);
+        positive = 0x44;
+    }
+
     if (n <= 0) {
         strlcpy(m->clear_result, "NO REPLY", sizeof(m->clear_result));
     } else if (resp[0].data[0] == positive) {
