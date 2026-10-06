@@ -113,7 +113,7 @@ void diag_default_rx_range(uint32_t tx_id, uint32_t *lo, uint32_t *hi)
 {
     if (tx_id == DIAG_FUNCTIONAL_ID)               { *lo = 0x7E8; *hi = 0x7EF; }
     else if (tx_id >= 0x7E0 && tx_id <= 0x7E7)     { *lo = *hi = tx_id + 8; }
-    else if (tx_id >= 0x700 && tx_id <= 0x77F)     { *lo = *hi = tx_id + 0x6A; }
+    else if (tx_id >= 0x700 && tx_id <= 0x795)     { *lo = *hi = tx_id + 0x6A; }
     else                                           { *lo = 0x600; *hi = 0x7FF; }
 }
 

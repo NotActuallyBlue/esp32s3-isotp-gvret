@@ -86,7 +86,7 @@ Compatibility notes:
 Diag mode turns the dongle into a standalone trouble code tool. You use the two buttons: **BOOT** moves to the next item, and **KEY**
 selects (a short press of KEY also goes back).
 
-**Scan codes** asks every control unit in the car for its trouble codes. It takes about six seconds and lists the modules that answered,
+**Scan codes** asks every control unit in the car for its trouble codes. It takes about ten seconds and lists the modules that answered,
 with their codes.
 
 | What the screen shows | What it means |
@@ -98,8 +98,9 @@ with their codes.
 | **MIL** | the warning lamp is requested |
 | **HIST** (dimmed) | the module only remembers that it failed at some point since the last clear; it is not counted as a fault |
 
-Some modules list codes in their own format. In the engine and transmission they are standard codes such as P0300; other modules may
-show a manufacturer-specific number. If a number does not look familiar, look it up for your car.
+Some modules list codes in their own format. In the engine and transmission they are standard codes such as P0300. Other Volkswagen
+and Audi modules report their own six-digit number (for example 003E0A), which the screen shows exactly as the module sent it. Look it up
+with your usual VW tool or app to get the name. Simos Tools and Simos.app have their own code readers.
 
 **Clear codes** asks you to confirm: **hold KEY for 2 seconds**. The dongle then asks every module to clear, reads each one back, and shows
 what is really left. A few things to know:

@@ -360,10 +360,10 @@ static void scan(void)
     status("SCANNING", COLOR_YELLOW);
 
     // Physical OBD addresses first, then the VAG style 0x700 range (answers on request + 0x6A)
-    uint32_t candidates[8 + 0x80];
+    uint32_t candidates[8 + 0x96];
     int total = 0;
     for (uint32_t id = 0x7E0; id <= 0x7E7; id++) candidates[total++] = id;
-    for (uint32_t id = 0x700; id < 0x780; id++) candidates[total++] = id;
+    for (uint32_t id = 0x700; id < 0x796; id++) candidates[total++] = id;
 
     canstats_totals_t before;
     canstats_get_totals(&before);
@@ -444,7 +444,10 @@ static void entry_at(int index, char *label, size_t lsize, char *value, size_t v
             char code[6];
             obd_format_dtc(d->code, code);
             if (d->has_status) {
-                snprintf(label, lsize, "%s-%02X", code, d->fault_type);
+                // Engine and transmission use the standard code format. Other VW modules report their own number, which a
+                // P/B/C/U letter would only mislead, so show what the module sent.
+                if (is_obd_physical(m->tx) || (d->code >> 14) != 0) snprintf(label, lsize, "%s-%02X", code, d->fault_type);
+                else snprintf(label, lsize, "%04X%02X", d->code, d->fault_type);
                 obd_format_status(d->status, value, vsize);
                 *color = dtc_is_history(d) ? COLOR_LIGHTGREY :
                          (d->status & (DTC_STATUS_TEST_FAILED | DTC_STATUS_WARNING_LAMP)) ? COLOR_RED :
