@@ -264,6 +264,16 @@ static bool read_module(module_t *m)
         return true;
     }
 
+    // Some modules refuse the fault-status mask but answer a request for every entry
+    static const uint8_t read_all[] = { 0x19, 0x02, 0xFF };
+    n = request(m->tx, read_all, sizeof(read_all), SCAN_TIMEOUT_MS);
+    if (n > 0 && resp[0].data[0] == 0x59) {
+        m->uds = true;
+        m->dtc_count = (uint8_t)obd_parse_uds_dtcs(resp[0].data, resp[0].len, m->dtcs, MAX_MODULE_DTCS);
+        m->dtc_count = (uint8_t)obd_keep_faults(m->dtcs, m->dtc_count);
+        return true;
+    }
+
     m->denied = true;                                   // present, but will not tell us (needs a session or login)
     return true;
 }
@@ -338,10 +348,10 @@ static void scan(void)
     status("SCANNING", COLOR_YELLOW);
 
     // Physical OBD addresses first, then the VAG style 0x700 range (answers on request + 0x6A)
-    uint32_t candidates[8 + 0x70];
+    uint32_t candidates[8 + 0x80];
     int total = 0;
     for (uint32_t id = 0x7E0; id <= 0x7E7; id++) candidates[total++] = id;
-    for (uint32_t id = 0x700; id < 0x770; id++) candidates[total++] = id;
+    for (uint32_t id = 0x700; id < 0x780; id++) candidates[total++] = id;
 
     canstats_totals_t before;
     canstats_get_totals(&before);

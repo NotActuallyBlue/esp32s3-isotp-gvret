@@ -54,7 +54,7 @@ lengthens the gap); ECU replies come back in about 30-45 ms; the connection asks
 
 ### Diag
 
-* **Scan** asks the OBD addresses 0x7E0-0x7E7 and the VAG range 0x700-0x76F (answers on request + 0x6A), about 6 s. Modules
+* **Scan** asks the OBD addresses 0x7E0-0x7E7 and the VAG range 0x700-0x77F (answers on request + 0x6A), about 6 s. Modules
   that speak UDS are read with service 0x19 and status mask 0xAF, so only real faults come back. VAG modules also list every code
   they monitor with the "test not completed" bits (0x10, 0x40) set, and those are dropped. Entries with only 0x20 ("failed since
   last clear") are history: the module does not hold them as stored, pending or active, OBD-II does not list them, and the
