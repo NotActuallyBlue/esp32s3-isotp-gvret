@@ -77,8 +77,8 @@ charged.
 
 Compatibility notes:
 
-* **Simos.app** works with both the engine ECU and the transmission control unit (TCU).
-* **Simos Tools** works for ECU monitoring. Enabling TCU monitoring in Simos Tools currently shows "Failed to create PID frame".
+* **Simos.app** works with both the engine control unit (ECU) and the transmission control unit (TCU).
+* **Simos Tools** works for engine control unit (ECU) monitoring. Enabling transmission control unit (TCU) monitoring in Simos Tools currently shows "Failed to create PID frame".
   Simos.app works with the TCU on the same dongle and car, so use it if you need the TCU.
 
 ## Diag mode
