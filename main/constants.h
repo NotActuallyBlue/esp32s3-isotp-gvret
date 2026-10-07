@@ -62,6 +62,7 @@ typedef int16_t                         bool16;
 #define UART_QUEUE_SIZE                 96
 #define ISOTP_BUFFER_SIZE               4096
 #define ISOTP_BUFFER_SIZE_SMALL         512
+#define ISOTP_BUFFER_SIZE_MEDIUM        1024
 
 // Communication Timeouts (in ms / ticks)
 #define TIMEOUT_SHORT                   50

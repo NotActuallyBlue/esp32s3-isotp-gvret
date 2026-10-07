@@ -62,7 +62,7 @@ void configure_isotp_links()
 	// HALDEX
 	haldex_isotp_link_container->number = 2;
 	strcpy(haldex_isotp_link_container->name, "isotp_container_haldex");
-	haldex_isotp_link_container->buffer_size = ISOTP_BUFFER_SIZE;
+	haldex_isotp_link_container->buffer_size = ISOTP_BUFFER_SIZE_MEDIUM;   // logging only: temperatures and pressures, short answers
 	haldex_isotp_link_container->recv_buf = calloc(1, haldex_isotp_link_container->buffer_size);
 	haldex_isotp_link_container->send_buf = calloc(1, haldex_isotp_link_container->buffer_size);
 	haldex_isotp_link_container->payload_buf = calloc(1, haldex_isotp_link_container->buffer_size);
