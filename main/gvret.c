@@ -13,20 +13,13 @@
 #include "canstats.h"
 #include "bench_sim.h"
 #include "elm_transport.h"
+#include "gvret_parser.h"
 
 #define GVRET_TAG       "GVRET"
 #define GVRET_SSID      "ISOTP-SAVVYCAN"
 #define GVRET_PORT      23              // the port SavvyCAN's "Network connection (GVRET)" uses by default
+#define PROTO_BUILD_CAN_FRAME 0
 #define BATCH_SIZE      1024
-
-// Protocol command bytes
-#define PROTO_BUILD_CAN_FRAME    0   // 0x00
-#define PROTO_TIME_SYNC          1   // 0x01
-#define PROTO_GET_CANBUS_PARAMS  6   // 0x06
-#define PROTO_GET_DEV_INFO       7   // 0x07
-#define PROTO_GET_EXT_BUSES      9   // 0x09
-#define PROTO_GET_NUM_BUSES      12  // 0x0C
-#define PROTO_GET_NUM_BUSES_EXT  13  // 0x0D
 
 typedef struct {
     uint32_t    id;
@@ -82,7 +75,7 @@ static void can_transmit(uint32_t id, bool extended, uint8_t dlc, const uint8_t 
     }
     twai_message_t frame = { 0 };
     frame.extd = extended;
-    frame.identifier = extended ? id : (id & 0x7FF);
+    frame.identifier = id;
     frame.data_length_code = dlc;
     memcpy(frame.data, data, dlc);
     twai_transmit(&frame, pdMS_TO_TICKS(10));
@@ -150,112 +143,28 @@ static void gvret_rx_can_task(void *arg)
 }
 
 // ---------------------------------------------------------------- command parser
-// Works byte by byte, so a command split across two reads (normal over TCP) is still understood.
-typedef enum { ST_IDLE, ST_CMD, ST_FRAME } parse_state_t;
-
-typedef struct {
-    parse_state_t   state;
-    uint8_t         buf[16];
-    int             have;
-    int             need;
-    void          (*write)(const uint8_t *data, size_t len);
-} parser_t;
-
-static void put_u32(uint8_t *out, uint32_t v)
+static void parser_transmit(uint32_t id, bool extended, uint8_t dlc, const uint8_t *data)
 {
-    out[0] = v & 0xFF; out[1] = (v >> 8) & 0xFF; out[2] = (v >> 16) & 0xFF; out[3] = (v >> 24) & 0xFF;
+    can_transmit(id, extended, dlc, data);
 }
 
-static void handle_command(parser_t *p, uint8_t cmd)
+static uint32_t parser_now_us(void)
 {
-    switch (cmd) {
-    case PROTO_GET_NUM_BUSES: {
-        const uint8_t resp[] = { 0xF1, PROTO_GET_NUM_BUSES, 1 };
-        p->write(resp, sizeof(resp));
-        break;
-    }
-    case PROTO_GET_NUM_BUSES_EXT: {
-        const uint8_t resp[] = { 0xF1, PROTO_GET_NUM_BUSES_EXT, 0 };
-        p->write(resp, sizeof(resp));
-        break;
-    }
-    case PROTO_GET_DEV_INFO: {
-        const uint8_t resp[] = { 0xF1, PROTO_GET_DEV_INFO, 0x20, 0x01, 0x00, 0x00 };
-        p->write(resp, sizeof(resp));
-        break;
-    }
-    case PROTO_GET_CANBUS_PARAMS: {
-        const uint8_t resp[] = { 0xF1, PROTO_GET_CANBUS_PARAMS, 0x01, 0x20, 0xA1, 0x07, 0x00 };   // bus 0 active, 500000 baud
-        p->write(resp, sizeof(resp));
-        break;
-    }
-    case PROTO_GET_EXT_BUSES: {                 // also used as the keepalive ping
-        const uint8_t resp[] = { 0xF1, PROTO_GET_EXT_BUSES, 0x01, 0x00, 0x00, 0x00 };
-        p->write(resp, sizeof(resp));
-        break;
-    }
-    case PROTO_TIME_SYNC: {
-        uint8_t resp[6] = { 0xF1, PROTO_TIME_SYNC };
-        put_u32(resp + 2, (uint32_t)esp_timer_get_time());
-        p->write(resp, sizeof(resp));
-        break;
-    }
-    default:
-        break;
-    }
+    return (uint32_t)esp_timer_get_time();
 }
 
-static void parser_feed(parser_t *p, const uint8_t *data, size_t len)
-{
-    for (size_t i = 0; i < len; i++) {
-        uint8_t b = data[i];
-        switch (p->state) {
-        case ST_IDLE:
-            if (b == 0xF1) p->state = ST_CMD;           // anything else (0xE7 filler, checksums) is skipped
-            break;
-
-        case ST_CMD:
-            if (b == PROTO_BUILD_CAN_FRAME) {
-                p->state = ST_FRAME;
-                p->have = 0;
-                p->need = 6;                            // id (4), bus (1), length (1), then the data
-            } else {
-                handle_command(p, b);
-                p->state = ST_IDLE;
-            }
-            break;
-
-        case ST_FRAME:
-            p->buf[p->have++] = b;
-            if (p->have == 6) {
-                uint8_t dlc = p->buf[5] & 0x0F;
-                p->need = 6 + (dlc > 8 ? 8 : dlc);
-            }
-            if (p->have >= p->need) {
-                uint32_t id = (uint32_t)p->buf[0] | ((uint32_t)p->buf[1] << 8) | ((uint32_t)p->buf[2] << 16) | ((uint32_t)p->buf[3] << 24);
-                uint8_t dlc = p->buf[5] & 0x0F;
-                if (dlc > 8) dlc = 8;
-                bool extended = (id & (1UL << 31)) != 0;
-                can_transmit(id & ~(1UL << 31), extended, dlc, &p->buf[6]);
-                p->state = ST_IDLE;
-            }
-            break;
-        }
-    }
-}
-
-static parser_t usb_parser = { .state = ST_IDLE, .write = write_usb };
-static parser_t net_parser = { .state = ST_IDLE, .write = write_net };
+static gvret_parser_t usb_parser = { .write = write_usb, .transmit = parser_transmit, .now_us = parser_now_us };
+static gvret_parser_t net_parser = { .write = write_net, .transmit = parser_transmit, .now_us = parser_now_us };
 
 // Wi-Fi client sent bytes (runs in the TCP server task)
 static void on_net_rx(const uint8_t *data, size_t len)
 {
-    parser_feed(&net_parser, data, len);
+    gvret_parser_feed(&net_parser, data, len);
 }
 
 static void on_net_link(bool up)
 {
-    net_parser.state = ST_IDLE;
+    gvret_parser_reset(&net_parser);
     ESP_LOGI(GVRET_TAG, "SavvyCAN %s over Wi-Fi", up ? "connected" : "disconnected");
 }
 
@@ -264,7 +173,7 @@ static void gvret_usb_task(void *arg)
     uint8_t rx_buf[128];
     while (1) {
         int len = usb_serial_jtag_read_bytes(rx_buf, sizeof(rx_buf), pdMS_TO_TICKS(20));
-        if (len > 0) parser_feed(&usb_parser, rx_buf, len);
+        if (len > 0) gvret_parser_feed(&usb_parser, rx_buf, len);
     }
 }
 
@@ -313,6 +222,13 @@ static void gvret_screen_task(void *arg)
         uint16_t state_color;
         const char *state = can_state_text(&state_color);
 
+        // Frames the controller had no room for (the reader was too slow) are the ones SavvyCAN never sees
+        uint32_t lost = 0;
+        twai_status_info_t st;
+        if (!bench_mode && twai_get_status_info(&st) == ESP_OK) lost = st.rx_missed_count + st.rx_overrun_count;
+        char lost_text[16];
+        snprintf(lost_text, sizeof(lost_text), "%lu", (unsigned long)lost);
+
         display_detail_t d[] = {
             { "#WI-FI",    "",                            COLOR_CYAN },
             { "NETWORK",   elm_wifi_ssid(),               COLOR_WHITE },
@@ -324,9 +240,15 @@ static void gvret_screen_task(void *arg)
             { "FRAMES RX", rx,                            COLOR_WHITE },
             { "FRAMES TX", tx,                            COLOR_WHITE },
             { "CAN BUS",   state,                         state_color },
+            { "FRAMES LOST", lost_text,                   lost ? COLOR_RED : COLOR_GREEN },
         };
         display_set_details("SAVVYCAN", COLOR_CYAN, d, sizeof(d) / sizeof(d[0]));
         display_set_status("SAVVYCAN", (net || usb) ? "CONNECTED" : "READY", (net || usb) ? COLOR_GREEN : COLOR_CYAN);
+        static uint32_t last_lost;
+        if (lost != last_lost) {
+            ESP_LOGW(GVRET_TAG, "CAN frames lost because the reader fell behind: %lu so far", (unsigned long)lost);
+            last_lost = lost;
+        }
         static uint32_t last_dropped, last_tx;
         if (bench_dropped != last_dropped || g_tx_count != last_tx) {
             ESP_LOGI(GVRET_TAG, "frames sent to the bus %lu, bench queue overflows %lu", (unsigned long)g_tx_count, (unsigned long)bench_dropped);

@@ -167,6 +167,7 @@ void app_main(void)
     int heap_ticks = 0;
     int bus_ticks = 0, bus_quiet_logs = 0;
     uint32_t bus_last_frames = 0;
+    uint32_t bus_last_lost = 0;
     bool bus_was_alive = true;      // so a silent bus is logged at the first check
     bool image_validated = false;
     while (1) {
@@ -182,11 +183,13 @@ void app_main(void)
             bool alive = delta > 0;
             twai_status_info_t st;
             bool have_state = twai_get_status_info(&st) == ESP_OK;
-            if (alive != bus_was_alive || ++bus_quiet_logs >= 6) {
+            uint32_t lost = have_state ? st.rx_missed_count + st.rx_overrun_count : 0;
+            if (alive != bus_was_alive || ++bus_quiet_logs >= 6 || lost != bus_last_lost) {
                 bus_quiet_logs = 0;
                 bus_was_alive = alive;
-                ESP_LOGI(MAIN_TAG, "Bus: %s, %lu frame(s) in the last 10 s, %lu unique id(s), CAN %s (TEC %lu, REC %lu)",
-                         alive ? "ALIVE" : "SILENT", (unsigned long)delta, (unsigned long)totals.unique_ids,
+                bus_last_lost = lost;
+                ESP_LOGI(MAIN_TAG, "Bus: %s, %lu frame(s) in the last 10 s, %lu unique id(s), %lu lost, CAN %s (TEC %lu, REC %lu)",
+                         alive ? "ALIVE" : "SILENT", (unsigned long)delta, (unsigned long)totals.unique_ids, (unsigned long)lost,
                          !have_state ? "n/a" : st.state == TWAI_STATE_RUNNING ? "running" : st.state == TWAI_STATE_BUS_OFF ? "BUS OFF" : "other",
                          have_state ? (unsigned long)st.tx_error_counter : 0UL, have_state ? (unsigned long)st.rx_error_counter : 0UL);
             }

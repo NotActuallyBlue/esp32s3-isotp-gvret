@@ -253,14 +253,20 @@ void twai_alert_task(void* arg)
                     ESP_LOGE(TWAI_TAG, "Bus Off state detected!");
                     if (xSemaphoreTake(twai_bus_off_mutex, pdMS_TO_TICKS(TIMEOUT_NORMAL)) == pdTRUE) {
                         ESP_LOGW(TWAI_TAG, "Initiate bus recovery");
-                        ESP_ERROR_CHECK(twai_initiate_recovery());
+                        esp_err_t err = twai_initiate_recovery();
+                        if (err != ESP_OK) {
+                            // Not worth restarting the dongle over: it could be in the middle of a flash
+                            ESP_LOGE(TWAI_TAG, "Bus recovery failed: %s", esp_err_to_name(err));
+                            xSemaphoreGive(twai_bus_off_mutex);
+                        }
                     }
                 }
 
                 if (alerts & TWAI_ALERT_BUS_RECOVERED) {
-                    ESP_ERROR_CHECK(twai_start());
+                    esp_err_t err = twai_start();
+                    if (err != ESP_OK) ESP_LOGE(TWAI_TAG, "Restart after bus recovery failed: %s", esp_err_to_name(err));
+                    else ESP_LOGI(TWAI_TAG, "Bus Recovered");
                     xSemaphoreGive(twai_bus_off_mutex);
-                    ESP_LOGI(TWAI_TAG, "Bus Recovered");
                 }
             }
 

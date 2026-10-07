@@ -125,7 +125,7 @@ Per-frame lines are limited to a fixed budget per boot after the first PID is re
 
 ## Tests
 
-* **Host tests:** the ISO-TP engine, the OBD/UDS decoders and the ELM327 interpreter are plain C with unit tests:
+* **Host tests:** the ISO-TP engine, the OBD/UDS decoders, the ELM327 interpreter and the SavvyCAN (GVRET) command reader are plain C with unit tests:
   `pio test -e native`.
 * **Over BLE from a desktop** (needs `pip install bleak` and a Bluetooth adapter): `python3 tools/ble_probe.py all` speaks the
   Simos protocol like the apps do (handshake, settings, single and multi-frame and 69-byte requests, split packets, persist
@@ -133,7 +133,7 @@ Per-frame lines are limited to a fixed budget per boot after the first PID is re
   Wi-Fi) runs an ELM327 session like a phone app would, and `python3 tools/gvret_probe.py` runs a SavvyCAN (GVRET) session over
   Wi-Fi. Put the dongle in bench mode first.
 * **Test builds**, set with `PLATFORMIO_BUILD_FLAGS` (never use these in a car, flash the normal build afterwards):
-  `-DFORCE_BENCH_SIM`, `-DFORCE_WIFI_UPDATE`, `-DFORCE_MODE=2` (Diag) or `=3` (ELM327) without saving, `-DDIAG_SELFTEST` (Diag
+  `-DFORCE_BENCH_SIM`, `-DFORCE_WIFI_UPDATE`, `-DFORCE_MODE=1` (SavvyCAN), `=2` (Diag) or `=3` (ELM327) without saving, `-DDIAG_SELFTEST` (Diag
   drives its own screens and logs the result), `-DELM_LOG_PASSWORD`, `-DSET_SAVED_MODE=n` (store a saved mode once at boot: 0 Simos, 1 SavvyCAN, 2 Diag, 3 ELM327; a serial reset from a PC
   can look like a long BOOT press and change the saved mode), and `-DPOWER_TEST=40` (sleep after 40 s with USB ignored,
   wake by timer after 15 s).

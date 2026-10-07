@@ -58,7 +58,12 @@ void elm_wifi_send(const uint8_t *data, size_t len)
     size_t pos = 0;
     while (fd >= 0 && pos < len) {
         int n = send(fd, data + pos, len - pos, 0);
-        if (n <= 0) break;
+        if (n <= 0) {
+            // The client stopped reading or is gone (the send timed out or failed). Half a reply would corrupt the stream, so
+            // end the connection; the reader task then notices and cleans up, and the dongle is free for a new client.
+            shutdown(fd, SHUT_RDWR);
+            break;
+        }
         pos += n;
     }
     xSemaphoreGive(client_mutex);
@@ -102,6 +107,15 @@ static void server_task(void *arg)
         setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
         struct timeval tv = { .tv_sec = 1 };
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        struct timeval send_tv = { .tv_sec = 0, .tv_usec = 500000 };
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &send_tv, sizeof(send_tv));
+
+        // A phone or laptop that leaves without closing the connection is detected in about 11 s, so the dongle can sleep again
+        int keepalive = 1, idle = 5, interval = 2, count = 3;
+        setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
+        setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+        setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &interval, sizeof(interval));
+        setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &count, sizeof(count));
         ESP_LOGI(WIFI_TAG, "Client connected");
         if (link_cb) link_cb(true);
 
