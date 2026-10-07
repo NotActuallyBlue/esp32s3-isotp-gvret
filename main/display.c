@@ -562,7 +562,12 @@ static void draw_row(const row_t *r, int y)
         strip_text(14, 0, r->label, r->color, 1);
         strip_fill(14 + tw + 6, 7, LCD_H_RES - (14 + tw + 6) - 8, 1, C_LINE);
     } else {
-        strip_text(8, 0, r->label, C_LABEL, 1);
+        // A label that would run into its value is cut short instead of printing over it
+        int room = LCD_H_RES - 8 - 8 - text_width(r->value, 1) - 8;
+        char label[24];
+        strlcpy(label, r->label, sizeof(label));
+        if (text_width(label, 1) > room) label[room > 0 ? room / 8 : 0] = 0;
+        strip_text(8, 0, label, C_LABEL, 1);
         strip_text(LCD_H_RES - 8 - text_width(r->value, 1), 0, r->value, r->color, 1);
     }
     display_push(0, y, LCD_H_RES, FONT_SMALL_H);
@@ -644,7 +649,8 @@ static void display_update_info(const display_view_t *v, uint32_t notify_rate)
         y += ROW_PITCH;
     }
     if (moved) {
-        int bottom = display_shows_counters(v) ? BOTTOM_DIVIDER_Y : LCD_V_RES - 4;
+        // Leave the page indicator (bottom 10 px) alone on the pages that have one
+        int bottom = display_shows_counters(v) ? BOTTOM_DIVIDER_Y : (detail_count == 0 ? LCD_V_RES - 12 : LCD_V_RES - 4);
         display_fill_rect(0, ROWS_Y, LCD_H_RES, bottom - ROWS_Y, COLOR_BLACK);
         memset(row_key, 0, sizeof(row_key));
         memcpy(prev_y, ys, sizeof(int) * n);

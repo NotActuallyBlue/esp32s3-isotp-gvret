@@ -135,7 +135,7 @@ static void update_screen(void)
         { "NAME",     ELM_BLE_NAME,           COLOR_WHITE },
         { "STATE",    ble_value,              elm_ble_connected() ? COLOR_GREEN : COLOR_YELLOW },
         { "#WI-FI",   "",                     COLOR_CYAN },
-        { "NETWORK",  elm_wifi_ssid(),        COLOR_WHITE },
+        { "SSID",     elm_wifi_ssid(),        COLOR_WHITE },
         { "PASSWORD", elm_wifi_password(),    COLOR_YELLOW },
         { "IP",       ELM_WIFI_IP,            COLOR_WHITE },
         { "PORT",     "35000",                COLOR_WHITE },

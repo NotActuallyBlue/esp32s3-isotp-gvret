@@ -232,7 +232,7 @@ static void gvret_screen_task(void *arg)
 
         display_detail_t d[] = {
             { "#WI-FI",    "",                            COLOR_CYAN },
-            { "NETWORK",   elm_wifi_ssid(),               COLOR_WHITE },
+            { "SSID",      elm_wifi_ssid(),               COLOR_WHITE },
             { "PASSWORD",  elm_wifi_password(),           COLOR_YELLOW },
             { "IP",        ELM_WIFI_IP,                   COLOR_WHITE },
             { "PORT",      port,                          COLOR_WHITE },
