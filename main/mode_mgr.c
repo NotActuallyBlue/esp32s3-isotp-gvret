@@ -8,6 +8,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "display.h"
+#include "stackwatch.h"
 
 #define TAG "MODE_MGR"
 #define NVS_NAMESPACE "dongle_cfg"
@@ -88,7 +89,7 @@ static void show_prompt(hold_zone_t zone)
     switch (zone) {
         case ZONE_BENCH:  display_set_prompt("RELEASE FOR", "BENCH SIM",   COLOR_CYAN);   break;
         case ZONE_UPDATE: display_set_prompt("RELEASE FOR", "WIFI UPDATE", COLOR_ORANGE); break;
-        case ZONE_CANCEL: display_set_prompt("RELEASE TO",  "CANCEL",      COLOR_LIGHTGREY); break;
+        case ZONE_CANCEL: display_set_prompt("RELEASE TO",  "CANCEL",      COLOR_MUTED); break;
         default: break;
     }
 }
@@ -115,7 +116,7 @@ static void restart_with(hold_zone_t zone)
             break;
         default:
             ESP_LOGI(TAG, "Menu cancelled, restarting");
-            display_set_prompt("CANCELLED", "REBOOTING", COLOR_LIGHTGREY);
+            display_set_prompt("CANCELLED", "REBOOTING", COLOR_MUTED);
             break;
     }
 
@@ -223,7 +224,7 @@ void mode_mgr_init(void)
              bench_boot ? " on the bench simulator" : "", get_mode_name(saved_mode));
 
     // Launch the runtime button listener task
-    xTaskCreate(mode_button_monitor_task, "mode_btn_task", 2048, NULL, 1, NULL);
+    stackwatch_create(mode_button_monitor_task, "mode_btn_task", 2048, NULL, 1);
 }
 
 dongle_mode_t mode_mgr_get(void)

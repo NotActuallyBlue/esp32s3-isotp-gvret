@@ -14,6 +14,7 @@
 #include "isotp_bridge.h"
 #include "esp_timer.h"
 #include "display.h"
+#include "stackwatch.h"
 
 #define PERSIST_TAG	"Persist"
 
@@ -120,7 +121,7 @@ void persist_start_task()
 	xSemaphoreTake(sync_task_sem, 0);
 	for (uint16_t i = 0; i < PERSIST_COUNT; i++) {
 		persist_t* pPersist = &persist_msgs[i];
-		xTaskCreate(persist_task, "PERSIST_process", TASK_STACK_SIZE, pPersist, PERSIST_TSK_PRIO, NULL);
+		stackwatch_create(persist_task, "PERSIST_process", TASK_STACK_SIZE, pPersist, PERSIST_TSK_PRIO);
 		xSemaphoreTake(sync_task_sem, portMAX_DELAY);
 	}
 	ESP_LOGI(PERSIST_TAG, "Tasks started");

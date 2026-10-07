@@ -22,6 +22,7 @@
 #include "isotp_bridge.h"
 #include "display.h"
 #include "bench_sim.h"
+#include "stackwatch.h"
 
 #define BRIDGE_TAG                  "Bridge"
 
@@ -334,10 +335,10 @@ void isotp_start_task(void)
     xSemaphoreTake(sync_task_sem, 0);
     for (uint16_t i = 0; i < NUM_ISOTP_LINK_CONTAINERS; i++) {
         IsoTpLinkContainer* c = &isotp_link_containers[i];
-        xTaskCreate(isotp_processing_task, c->name, TASK_STACK_SIZE, c, ISOTP_TSK_PRIO, NULL);
+        stackwatch_create(isotp_processing_task, c->name, TASK_STACK_SIZE, c, ISOTP_TSK_PRIO);
         xSemaphoreTake(sync_task_sem, portMAX_DELAY);
     }
-    xTaskCreate(isotp_send_queue_task, "ISOTP_send_q", TASK_STACK_SIZE, NULL, MAIN_TSK_PRIO, NULL);
+    stackwatch_create(isotp_send_queue_task, "ISOTP_send_q", TASK_STACK_SIZE, NULL, MAIN_TSK_PRIO);
     xSemaphoreTake(sync_task_sem, portMAX_DELAY);
 }
 

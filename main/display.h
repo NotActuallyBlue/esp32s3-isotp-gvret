@@ -17,7 +17,7 @@ extern "C" {
 #define COLOR_GREEN            0xE007
 #define COLOR_BLUE             0x1F00
 #define COLOR_DARKGREY         0x1042
-#define COLOR_LIGHTGREY        COLOR_RGB(190, 196, 208)
+#define COLOR_MUTED            COLOR_RGB(190, 100, 230)     // orchid: history, inactive, cancel
 #define COLOR_CYAN             0xFF07
 #define COLOR_YELLOW           0xE0FF
 #define COLOR_ORANGE           0x00FD

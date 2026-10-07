@@ -11,7 +11,10 @@
 #include "ble_server.h"
 #include "connection_handler.h"
 
+#ifdef SIMOS_UART_TRANSPORT
+
 #include "driver/gpio.h"
+#include "stackwatch.h"
 
 #define UART_TAG 		"UART"
 
@@ -110,9 +113,9 @@ void uart_start_task()
 	ESP_LOGI(UART_TAG, "uart_start_task - starting");
 
 	xSemaphoreTake(sync_task_sem, 0);
-	xTaskCreate(uart_receive_task, "UART_receive_process", TASK_STACK_SIZE, NULL, UART_TSK_PRIO, NULL);
+	stackwatch_create(uart_receive_task, "UART_receive_process", TASK_STACK_SIZE, NULL, UART_TSK_PRIO);
 	xSemaphoreTake(sync_task_sem, portMAX_DELAY);
-	xTaskCreate(uart_send_task, "UART_send_process", TASK_STACK_SIZE, NULL, UART_TSK_PRIO, NULL);
+	stackwatch_create(uart_send_task, "UART_send_process", TASK_STACK_SIZE, NULL, UART_TSK_PRIO);
 	xSemaphoreTake(sync_task_sem, portMAX_DELAY);
 
 	ESP_LOGI(UART_TAG, "uart_start_task - complete");
@@ -423,3 +426,5 @@ void uart_receive_task(void *arg)
 	ESP_ERROR_CHECK(esp_task_wdt_delete(NULL));
 	vTaskDelete(NULL);
 }
+
+#endif // SIMOS_UART_TRANSPORT

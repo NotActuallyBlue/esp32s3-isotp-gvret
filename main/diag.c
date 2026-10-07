@@ -14,6 +14,7 @@
 #include "power_mgr.h"
 #include "canstats.h"
 #include "diag.h"
+#include "stackwatch.h"
 
 #define DIAG_TAG            "Diag"
 #define KEY_PIN             14                  // second button on the T-Display-S3
@@ -347,7 +348,7 @@ static void show_menu(void)
         rowf("MODULES", COLOR_WHITE, "%d", module_count);
         int codes = total_codes();
         rowf("CODES", codes ? COLOR_ORANGE : COLOR_GREEN, "%d", codes);
-        if (total_history()) rowf("HISTORY", COLOR_LIGHTGREY, "%d", total_history());
+        if (total_history()) rowf("HISTORY", COLOR_MUTED, "%d", total_history());
     }
     show("DIAGNOSTICS", COLOR_CYAN);
     status("READY", COLOR_CYAN);
@@ -380,7 +381,7 @@ static void scan(void)
             rows_reset();
             rowf("PROGRESS", COLOR_WHITE, "%d%%", i * 100 / total);
             rowf("ADDRESS", COLOR_WHITE, "0x%03lX", (unsigned long)candidates[i]);
-            rowf("MODULES", module_count ? COLOR_GREEN : COLOR_LIGHTGREY, "%d", module_count);
+            rowf("MODULES", module_count ? COLOR_GREEN : COLOR_MUTED, "%d", module_count);
             rowf("CODES", total_codes() ? COLOR_ORANGE : COLOR_GREEN, "%d", total_codes());
             row("KEY", "cancel", 0);
             show("SCANNING", COLOR_YELLOW);
@@ -428,7 +429,7 @@ static void entry_at(int index, char *label, size_t lsize, char *value, size_t v
         const module_t *m = &modules[i];
         if (index == 0) {
             snprintf(label, lsize, "#%s", m->name);
-            *color = module_faults(m) ? COLOR_ORANGE : (m->dtc_count ? COLOR_LIGHTGREY : COLOR_GREEN);
+            *color = module_faults(m) ? COLOR_ORANGE : (m->dtc_count ? COLOR_MUTED : COLOR_GREEN);
             return;
         }
         index--;
@@ -449,7 +450,7 @@ static void entry_at(int index, char *label, size_t lsize, char *value, size_t v
                 if (is_obd_physical(m->tx) || (d->code >> 14) != 0) snprintf(label, lsize, "%s-%02X", code, d->fault_type);
                 else snprintf(label, lsize, "%04X%02X", d->code, d->fault_type);
                 obd_format_status(d->status, value, vsize);
-                *color = dtc_is_history(d) ? COLOR_LIGHTGREY :
+                *color = dtc_is_history(d) ? COLOR_MUTED :
                          (d->status & (DTC_STATUS_TEST_FAILED | DTC_STATUS_WARNING_LAMP)) ? COLOR_RED :
                          ((d->status & DTC_STATUS_PENDING) && !(d->status & DTC_STATUS_CONFIRMED) ? COLOR_YELLOW : COLOR_ORANGE);
             } else {
@@ -579,7 +580,7 @@ static void show_confirm(int held_ms)
     } else {
         row("HOLD KEY 2 s", "to clear", COLOR_CYAN);
     }
-    row("BOOT", "cancel", COLOR_LIGHTGREY);
+    row("BOOT", "cancel", COLOR_MUTED);
     show("CLEAR CODES?", COLOR_ORANGE);
     status("CONFIRM", COLOR_ORANGE);
 }
@@ -728,7 +729,7 @@ static void clear_all(void)
             row(m->name, accepted ? "CLEARED" : "NO CODES", COLOR_GREEN);
         } else if (faults == 0) {
             snprintf(value, sizeof(value), "%d HISTORY", hist);          // only "failed since last clear" entries are left
-            row(m->name, value, COLOR_LIGHTGREY);
+            row(m->name, value, COLOR_MUTED);
         } else if (accepted) {
             snprintf(value, sizeof(value), "%d BACK", faults);
             row(m->name, value, COLOR_ORANGE);
@@ -774,7 +775,7 @@ static void live_data(void)
         if (next == 0 || next == LIVE_PID_COUNT / 2) {
             rows_reset();
             for (int i = 0; i < LIVE_PID_COUNT; i++) {
-                row(obd_pid_name(pids[i]), values[i], seen[i] ? COLOR_WHITE : COLOR_LIGHTGREY);
+                row(obd_pid_name(pids[i]), values[i], seen[i] ? COLOR_WHITE : COLOR_MUTED);
             }
             row("", "", 0);
             row("KEY", "back", COLOR_CYAN);
@@ -806,7 +807,7 @@ static void vehicle_info(void)
 
     rows_reset();
     row("#VEHICLE", "", COLOR_CYAN);
-    row("", vin[0] ? vin : "VIN not available", vin[0] ? COLOR_WHITE : COLOR_LIGHTGREY);
+    row("", vin[0] ? vin : "VIN not available", vin[0] ? COLOR_WHITE : COLOR_MUTED);
     if (have_ready) {
         row("MIL", ready.mil_on ? "ON" : "OFF", ready.mil_on ? COLOR_RED : COLOR_GREEN);
         rowf("CONFIRMED", ready.dtc_count ? COLOR_ORANGE : COLOR_GREEN, "%u", ready.dtc_count);
@@ -994,5 +995,5 @@ void diag_start(bool use_bench)
 
     mode_mgr_set_tap_handler(on_boot_tap);
     diag_can_start(use_bench);
-    xTaskCreate(diag_task, "diag", 8192, NULL, 2, NULL);
+    stackwatch_create(diag_task, "diag", 8192, NULL, 2);
 }

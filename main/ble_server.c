@@ -19,6 +19,7 @@
 #include "ble_server.h"
 #include "persist.h"
 #include "display.h"
+#include "stackwatch.h"
 
 #define BLE_TAG                              "BLE"
 
@@ -496,7 +497,7 @@ void ble_server_start(ble_server_callbacks callbacks)
     ESP_ERROR_CHECK(esp_ble_gatts_app_register(ESP_SPP_APP_ID));
 
     ble_set_run_tasks(true);
-    xTaskCreate(send_task, "BLE_sendTask", BLE_STACK_SIZE, NULL, BLE_TASK_PRIORITY, NULL);
+    stackwatch_create(send_task, "BLE_sendTask", BLE_STACK_SIZE, NULL, BLE_TASK_PRIORITY);
     ESP_LOGI(BLE_TAG, "Started");
 }
 

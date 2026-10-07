@@ -12,6 +12,7 @@
 #include "elm_transport.h"
 #include "elm_mode.h"
 #include "power_mgr.h"
+#include "stackwatch.h"
 
 #define ELM_TAG             "ElmMode"
 #define IN_CHUNK            64
@@ -139,10 +140,10 @@ static void update_screen(void)
         { "IP",       ELM_WIFI_IP,            COLOR_WHITE },
         { "PORT",     "35000",                COLOR_WHITE },
         { "#ACTIVITY", "",                    COLOR_CYAN },
-        { "CLIENT",   client,                 clients_connected() ? COLOR_GREEN : COLOR_LIGHTGREY },
+        { "CLIENT",   client,                 clients_connected() ? COLOR_GREEN : COLOR_MUTED },
         { "LAST",     activity,               COLOR_WHITE },
         { "COMMANDS", count,                  COLOR_WHITE },
-        { "CAN BUS",  bus,                    (quiet < 2000 || bench_mode) ? COLOR_GREEN : COLOR_LIGHTGREY },
+        { "CAN BUS",  bus,                    (quiet < 2000 || bench_mode) ? COLOR_GREEN : COLOR_MUTED },
     };
     display_set_details("ELM327", COLOR_CYAN, d, sizeof(d) / sizeof(d[0]));
     display_set_status("ELM327", clients_connected() ? "CONNECTED" : "READY", clients_connected() ? COLOR_GREEN : COLOR_CYAN);
@@ -178,7 +179,7 @@ void elm_mode_start(bool bench)
     }
 
     diag_can_start(bench);
-    xTaskCreate(elm_task, "elm", 8192, NULL, 2, NULL);
+    stackwatch_create(elm_task, "elm", 8192, NULL, 2);
     elm_ble_start(on_ble_rx, on_link);
     elm_wifi_start(on_wifi_rx, on_link);
     ESP_LOGI(ELM_TAG, "ELM327 emulation running (BLE '%s', Wi-Fi %s:%d)", ELM_BLE_NAME, ELM_WIFI_IP, ELM_WIFI_PORT);

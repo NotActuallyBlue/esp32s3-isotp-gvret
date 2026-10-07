@@ -11,6 +11,7 @@
 #include "ble_server.h"
 #include "uart.h"
 #include "twai.h"
+#include "stackwatch.h"
 
 #define CH_TAG 			"Connection_handler"
 
@@ -90,7 +91,7 @@ void ch_start_task()
 
 	ESP_LOGI(CH_TAG, "Task starting");
 	xSemaphoreTake(sync_task_sem, 0);
-	xTaskCreate(ch_task, "Connection_handling_process", TASK_STACK_SIZE, NULL, HANDLER_TSK_PRIO, NULL);
+	stackwatch_create(ch_task, "Connection_handling_process", TASK_STACK_SIZE, NULL, HANDLER_TSK_PRIO);
 	xSemaphoreTake(sync_task_sem, portMAX_DELAY);
 }
 

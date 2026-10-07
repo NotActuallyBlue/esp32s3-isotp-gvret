@@ -14,6 +14,7 @@
 #include "persist.h"
 #include "canstats.h"
 #include "driver/gpio.h"
+#include "stackwatch.h"
 
 #define TWAI_TAG        "TWAI"
 
@@ -114,10 +115,10 @@ void twai_start_task()
     ESP_LOGI(TWAI_TAG, "Tasks starting");
     xSemaphoreTake(sync_task_sem, 0);
 
-    xTaskCreate(twai_alert_task, "TWAI_alert", TASK_STACK_SIZE, NULL, TWAI_TASK_PRIO, NULL);
+    stackwatch_create(twai_alert_task, "TWAI_alert", TASK_STACK_SIZE, NULL, TWAI_TASK_PRIO);
     xSemaphoreTake(sync_task_sem, portMAX_DELAY);
 
-    xTaskCreate(twai_receive_task, "TWAI_rx", TASK_STACK_SIZE, NULL, TWAI_TASK_PRIO, NULL);
+    stackwatch_create(twai_receive_task, "TWAI_rx", TASK_STACK_SIZE, NULL, TWAI_TASK_PRIO);
     xSemaphoreTake(sync_task_sem, portMAX_DELAY);
 
     ESP_LOGI(TWAI_TAG, "Tasks started");
@@ -134,7 +135,7 @@ void twai_start_raw()
     twai_set_run_task(true);
 
     xSemaphoreTake(sync_task_sem, 0);
-    xTaskCreate(twai_alert_task, "TWAI_alert", TASK_STACK_SIZE, NULL, TWAI_TASK_PRIO, NULL);
+    stackwatch_create(twai_alert_task, "TWAI_alert", TASK_STACK_SIZE, NULL, TWAI_TASK_PRIO);
     xSemaphoreTake(sync_task_sem, portMAX_DELAY);
     ESP_LOGI(TWAI_TAG, "Driver started (raw)");
 }

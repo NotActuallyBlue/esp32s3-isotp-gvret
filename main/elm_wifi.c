@@ -14,6 +14,7 @@
 #include "nvs.h"
 #include "lwip/sockets.h"
 #include "elm_transport.h"
+#include "stackwatch.h"
 
 #define WIFI_TAG        "ElmWiFi"
 #define NVS_NAMESPACE   "dongle_cfg"
@@ -175,6 +176,6 @@ void elm_wifi_start_ex(const char *ssid, int port, elm_rx_cb rx, elm_link_cb lin
 #ifdef ELM_LOG_PASSWORD
     ESP_LOGW(WIFI_TAG, "TEST BUILD: Wi-Fi password is %s", password);     // never in release builds
 #endif
-    xTaskCreate(server_task, "elm_tcp", 4096, NULL, 2, NULL);
+    stackwatch_create(server_task, "elm_tcp", 4096, NULL, 2);
     ESP_LOGI(WIFI_TAG, "Access point '%s' started", ap_ssid);
 }

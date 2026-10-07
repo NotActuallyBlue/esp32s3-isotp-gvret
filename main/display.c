@@ -108,7 +108,7 @@ static uint16_t rgb(uint8_t r, uint8_t g, uint8_t b)
 }
 
 #define C_VALUE         rgb(235, 238, 245)
-#define C_LABEL         rgb(170, 180, 200)
+#define C_LABEL         rgb(180, 140, 255)
 #define C_LINE          rgb(40, 48, 64)
 #define C_LINK          rgb(0, 200, 255)
 #define C_BUS           rgb(255, 70, 200)
@@ -671,7 +671,7 @@ static void display_update_info(const display_view_t *v, uint32_t notify_rate)
     }
     snprintf(key, sizeof(key), "%lu", tx);
     if (strcmp(key, tx_key) != 0) {
-        draw_counter(COUNTERS_Y + 24, "TX", tx, COLOR_RGB(190, 160, 255));
+        draw_counter(COUNTERS_Y + 24, "TX", tx, COLOR_WHITE);
         strlcpy(tx_key, key, sizeof(tx_key));
     }
 }

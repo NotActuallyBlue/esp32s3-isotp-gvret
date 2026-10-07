@@ -34,6 +34,7 @@
 #include "esp_heap_caps.h"
 #include "canstats.h"
 #include "driver/twai.h"
+#include "stackwatch.h"
 
 SemaphoreHandle_t sync_task_sem = NULL;
 
@@ -165,6 +166,7 @@ void app_main(void)
     // if it crashes before that, the bootloader rolls back to the previous image.
     int uptime_ticks = 0;
     int heap_ticks = 0;
+    int stack_ticks = 100;      // first report after about 10 s
     int bus_ticks = 0, bus_quiet_logs = 0;
     uint32_t bus_last_frames = 0;
     uint32_t bus_last_lost = 0;
@@ -200,6 +202,12 @@ void app_main(void)
             heap_ticks = 0;
             ESP_LOGI(MAIN_TAG, "Heap: free %lu, lowest ever %lu, largest block %lu bytes", (unsigned long)esp_get_free_heap_size(),
                      (unsigned long)esp_get_minimum_free_heap_size(), (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+        }
+
+        // Stack headroom: the least free stack each task has ever had, so oversized stacks can be trimmed from real data
+        if (++stack_ticks >= 120) {
+            stack_ticks = 0;
+            stackwatch_log();
         }
 
         if (!image_validated && ++uptime_ticks >= 40) {

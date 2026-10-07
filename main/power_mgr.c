@@ -11,6 +11,7 @@
 #include "constants.h"
 #include "canstats.h"
 #include "display.h"
+#include "stackwatch.h"
 
 #define POWER_TAG       "Power"
 #define NVS_NAMESPACE   "dongle_cfg"
@@ -96,5 +97,5 @@ void power_mgr_start(power_busy_fn busy)
         return;
     }
     ESP_LOGI(POWER_TAG, "Deep sleep after %lld s without CAN traffic, clients or button presses", (long long)(idle_ms / 1000));
-    xTaskCreate(power_task, "power", 3072, NULL, 1, NULL);
+    stackwatch_create(power_task, "power", 3072, NULL, 1);
 }

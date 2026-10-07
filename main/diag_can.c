@@ -13,6 +13,7 @@
 #include "canstats.h"
 #include "bench_sim.h"
 #include "diag_can.h"
+#include "stackwatch.h"
 
 #define DIAG_TAG            "DiagCAN"
 #define RX_QUEUE_LEN        128
@@ -84,7 +85,7 @@ void diag_can_start(bool bench)
     } else {
         twai_init();
         twai_start_raw();
-        xTaskCreate(rx_task, "diag_rx", 3072, NULL, TWAI_TASK_PRIO, NULL);
+        stackwatch_create(rx_task, "diag_rx", 3072, NULL, TWAI_TASK_PRIO);
     }
 }
 

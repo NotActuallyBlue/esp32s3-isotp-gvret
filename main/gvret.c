@@ -14,6 +14,7 @@
 #include "bench_sim.h"
 #include "elm_transport.h"
 #include "gvret_parser.h"
+#include "stackwatch.h"
 
 #define GVRET_TAG       "GVRET"
 #define GVRET_SSID      "ISOTP-SAVVYCAN"
@@ -236,7 +237,7 @@ static void gvret_screen_task(void *arg)
             { "IP",        ELM_WIFI_IP,                   COLOR_WHITE },
             { "PORT",      port,                          COLOR_WHITE },
             { "#CAPTURE",  "",                            COLOR_CYAN },
-            { "CLIENT",    net ? "Wi-Fi" : (usb ? "USB" : "none"), (net || usb) ? COLOR_GREEN : COLOR_LIGHTGREY },
+            { "CLIENT",    net ? "Wi-Fi" : (usb ? "USB" : "none"), (net || usb) ? COLOR_GREEN : COLOR_MUTED },
             { "FRAMES RX", rx,                            COLOR_WHITE },
             { "FRAMES TX", tx,                            COLOR_WHITE },
             { "CAN BUS",   state,                         state_color },
@@ -271,7 +272,7 @@ void gvret_start(bool bench)
         bench_queue = xQueueCreate(256, sizeof(bench_frame_t));
         bench_sim_set_sink(bench_sink);
         bench_sim_start();
-        xTaskCreate(bench_traffic_task, "gvret_bench", 3072, NULL, 3, NULL);
+        stackwatch_create(bench_traffic_task, "gvret_bench", 3072, NULL, 3);
     }
 
     // USB stays available for bench use with SavvyCAN
@@ -283,8 +284,8 @@ void gvret_start(bool bench)
 
     elm_wifi_start_ex(GVRET_SSID, GVRET_PORT, on_net_rx, on_net_link);
 
-    xTaskCreate(gvret_rx_can_task, "gvret_can_rx", 4096, NULL, 5, NULL);
-    xTaskCreate(gvret_usb_task,    "gvret_usb",    4096, NULL, 4, NULL);
-    xTaskCreate(gvret_screen_task, "gvret_screen", 4096, NULL, 1, NULL);
+    stackwatch_create(gvret_rx_can_task, "gvret_can_rx", 4096, NULL, 5);
+    stackwatch_create(gvret_usb_task,    "gvret_usb",    4096, NULL, 4);
+    stackwatch_create(gvret_screen_task, "gvret_screen", 4096, NULL, 1);
     ESP_LOGI(GVRET_TAG, "SavvyCAN (GVRET) ready: Wi-Fi '%s' port %d, or USB", GVRET_SSID, GVRET_PORT);
 }

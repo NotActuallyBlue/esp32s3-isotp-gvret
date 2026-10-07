@@ -9,6 +9,7 @@
 #include "isotp.h"
 #include "isotp_link_containers.h"
 #include "bench_sim.h"
+#include "stackwatch.h"
 
 #define SIM_TAG             "BenchSim"
 #define SIM_NODE_COUNT      4
@@ -381,6 +382,6 @@ void bench_sim_start(void)
         node->link.st_min = node->st_min_us;                // advertised in our flow control frames
     }
     sim_active = true;
-    xTaskCreate(sim_task, "bench_sim", 4096, NULL, 3, NULL);
+    stackwatch_create(sim_task, "bench_sim", 4096, NULL, 3);
     ESP_LOGW(SIM_TAG, "Bench simulator running: virtual ECU 0x7E0/0x7E8, TCU 0x7E1/0x7E9, gateway 0x710/0x77A and ABS 0x713/0x77D, no CAN traffic");
 }

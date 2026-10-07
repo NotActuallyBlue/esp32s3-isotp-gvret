@@ -11,6 +11,7 @@
 #include "esp_system.h"
 #include "esp_core_dump.h"
 #include "flashlog.h"
+#include "stackwatch.h"
 
 #define FLASHLOG_TAG            "FlashLog"
 
@@ -231,7 +232,7 @@ void flashlog_init(void)
         return;
     }
 
-    xTaskCreate(flashlog_task, "flashlog", FLASHLOG_TASK_STACK, NULL, FLASHLOG_TASK_PRIO, NULL);
+    stackwatch_create(flashlog_task, "flashlog", FLASHLOG_TASK_STACK, NULL, FLASHLOG_TASK_PRIO);
     log_orig_vprintf = esp_log_set_vprintf(flashlog_vprintf);
 
     ESP_LOGI(FLASHLOG_TAG, "Boot #%lu logging to slot %d (reset reason %d)",
