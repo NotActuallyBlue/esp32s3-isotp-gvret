@@ -137,6 +137,7 @@ static void mode_button_monitor_task(void *pvParameters)
             if (held_ms == 0) {
                 woke_screen = !display_is_awake();      // the first press only wakes a sleeping screen
                 display_power(true);
+                display_skip_splash();
             }
             held_ms += BUTTON_POLL_MS;
 

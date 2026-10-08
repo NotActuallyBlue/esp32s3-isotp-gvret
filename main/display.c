@@ -109,15 +109,15 @@ static uint16_t rgb(uint8_t r, uint8_t g, uint8_t b)
     return COLOR_RGB(r, g, b);
 }
 
-#define C_VALUE         rgb(255, 240, 235)
-#define C_LABEL         rgb(255, 160, 185)
-#define C_LINE          rgb(85, 30, 45)
-#define C_LINK          rgb(255, 140, 35)
-#define C_BUS           rgb(255, 70, 140)
-#define C_SYSTEM        rgb(255, 115, 105)
-#define C_GOOD          rgb(0, 235, 110)
-#define C_WARN          rgb(255, 200, 0)
-#define C_BAD           rgb(255, 25, 35)
+#define C_VALUE         rgb(238, 218, 210)
+#define C_LABEL         rgb(200, 115, 140)
+#define C_LINE          rgb(62, 22, 34)
+#define C_LINK          rgb(210, 100, 20)
+#define C_BUS           rgb(200, 40, 100)
+#define C_SYSTEM        rgb(210, 80, 70)
+#define C_GOOD          rgb(0, 195, 95)
+#define C_WARN          rgb(220, 170, 0)
+#define C_BAD           rgb(225, 20, 30)
 
 static bool display_on_color_trans_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t *edata, void *ctx)
 {
@@ -685,11 +685,11 @@ static void display_update_info(const display_view_t *v, uint32_t notify_rate)
 }
 
 // ---------------------------------------------------------------------------------------------
-// Boot animation (about 1.9 s), drawn by the display task while the rest of the dongle starts up
+// Boot animation (4.5 s), drawn by the display task while the rest of the dongle starts up. A button press skips it.
 // ---------------------------------------------------------------------------------------------
 #define SPLASH_BRAND    "GHOSTWERKS"
-#define SPLASH_PRODUCT  "CANceiver"
-#define SPLASH_MS       1900
+#define SPLASH_PRODUCT  "PhantomCAN"
+#define SPLASH_MS       4500
 
 static volatile bool    splash_active = false;
 static int64_t          splash_start_us;
@@ -702,56 +702,73 @@ static uint16_t mix_color(int r1, int g1, int b1, int r2, int g2, int b2, int f)
 
 static int clamp_int(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
+static void display_wake(void);
+
+void display_skip_splash(void)
+{
+    splash_active = false;
+    taskENTER_CRITICAL(&state_lock);
+        view_dirty = true;
+    taskEXIT_CRITICAL(&state_lock);
+    display_wake();
+}
+
+//   0.0 - 0.6 s  a line sweeps out from the middle
+//   0.4 - 1.8 s  the brand appears letter by letter, the newest letter ghosted
+//   1.8 - 2.9 s  a highlight runs across the brand
+//   2.2 - 3.4 s  the product name types in (the CAN part in hot pink)
+//   3.2 - 4.0 s  an underline grows, then pulses until the end
 static void splash_frame(int t)
 {
     const int brand_len = (int)strlen(SPLASH_BRAND), product_len = (int)strlen(SPLASH_PRODUCT);
     const int brand_x = (LCD_H_RES - brand_len * 16) / 2, product_x = (LCD_H_RES - product_len * 16) / 2;
     const int top_y = 104, brand_y = 118, product_y = 150, under_y = 176;
+    const char *can_at = strstr(SPLASH_PRODUCT, "CAN");
+    const int can_from = can_at ? (int)(can_at - SPLASH_PRODUCT) : product_len;
+    const uint16_t cream = rgb(245, 230, 220);
 
-    // 1. a line sweeps out from the middle
-    int top_w = clamp_int(t * 150 / 350, 0, 150);
+    int top_w = clamp_int(t * 150 / 600, 0, 150);
     if (top_w > 0) display_fill_rect((LCD_H_RES - top_w) / 2, top_y, top_w, 2, COLOR_ROSE);
 
-    // 2. the brand appears letter by letter; the newest letter is white with a ghost on each side, then a highlight runs across
-    int shown = clamp_int((t - 300) / 65, 0, brand_len);
+    int shown = clamp_int((t - 400) / 140, 0, brand_len);
     if (shown > 0) {
         strip_begin(LCD_H_RES, FONT_LARGE_H, COLOR_BLACK);
-        int highlight = (t >= 1000) ? (t - 1000) / 45 : -10;
+        int highlight = (t >= 1800) ? (t - 1800) / 100 : -10;
         for (int i = 0; i < shown; i++) {
             char c[2] = { SPLASH_BRAND[i], 0 };
-            bool newest = (i == shown - 1 && shown < brand_len);
-            if (newest) {
-                strip_text(brand_x + i * 16 - 4, 0, c, rgb(110, 25, 40), 2);
-                strip_text(brand_x + i * 16 + 4, 0, c, rgb(110, 25, 40), 2);
+            if (i == shown - 1 && shown < brand_len) {
+                strip_text(brand_x + i * 16 - 4, 0, c, rgb(80, 18, 30), 2);
+                strip_text(brand_x + i * 16 + 4, 0, c, rgb(80, 18, 30), 2);
             }
         }
         for (int i = 0; i < shown; i++) {
             char c[2] = { SPLASH_BRAND[i], 0 };
-            bool newest = (i == shown - 1 && shown < brand_len);
-            uint16_t color = mix_color(255, 140, 35, 255, 70, 140, i * 255 / (brand_len - 1));
-            if (newest || i == highlight) color = rgb(255, 255, 255);
-            else if (i == highlight - 1) color = rgb(255, 205, 215);
+            uint16_t color = mix_color(210, 100, 20, 200, 40, 100, i * 255 / (brand_len - 1));
+            if ((i == shown - 1 && shown < brand_len) || i == highlight) color = cream;
+            else if (i == highlight - 1) color = rgb(225, 150, 165);
             strip_text(brand_x + i * 16, 0, c, color, 2);
         }
         display_push(0, brand_y, LCD_H_RES, FONT_LARGE_H);
     }
 
-    // 3. the product name types in underneath: CAN in hot pink, the rest in warm white
-    int typed = clamp_int((t - 1000) / 55, 0, product_len);
+    int typed = clamp_int((t - 2200) / 120, 0, product_len);
     if (typed > 0) {
         strip_begin(LCD_H_RES, FONT_LARGE_H, COLOR_BLACK);
         for (int i = 0; i < typed; i++) {
             char c[2] = { SPLASH_PRODUCT[i], 0 };
-            uint16_t color = (i < 3) ? COLOR_ROSE : rgb(255, 240, 235);
-            if (i == typed - 1 && typed < product_len) color = rgb(255, 255, 255);
+            uint16_t color = (i >= can_from) ? COLOR_ROSE : rgb(238, 218, 210);
+            if (i == typed - 1 && typed < product_len) color = cream;
             strip_text(product_x + i * 16, 0, c, color, 2);
         }
         display_push(0, product_y, LCD_H_RES, FONT_LARGE_H);
     }
 
-    // 4. an underline closes it off
-    int under_w = clamp_int((t - 1350) * 160 / 350, 0, 160);
-    if (under_w > 0) display_fill_rect((LCD_H_RES - under_w) / 2, under_y, under_w, 2, COLOR_ACCENT);
+    int under_w = clamp_int((t - 3200) * 160 / 800, 0, 160);
+    if (under_w > 0) {
+        // after it has grown, the line slowly shifts between mango and pink
+        int pulse = t > 4000 ? clamp_int((t - 4000) * 255 / 500, 0, 255) : 0;
+        display_fill_rect((LCD_H_RES - under_w) / 2, under_y, under_w, 2, mix_color(210, 100, 20, 200, 40, 100, pulse));
+    }
 }
 
 static void display_task(void *pvParameters)

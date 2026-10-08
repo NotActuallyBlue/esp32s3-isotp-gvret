@@ -14,14 +14,14 @@ extern "C" {
 #define COLOR_BLACK            0x0000
 #define COLOR_WHITE            0xFFFF
 // Red, pink and mango theme. Green always means good and pure red always means bad or broken; nothing else uses them.
-#define COLOR_RED              COLOR_RGB(255, 25, 35)       // bad, failed, broken
-#define COLOR_GREEN            COLOR_RGB(0, 235, 110)       // good
-#define COLOR_ACCENT           COLOR_RGB(255, 140, 35)      // mango: ready, links, hints
-#define COLOR_ROSE             COLOR_RGB(255, 70, 140)      // hot pink
-#define COLOR_CORAL            COLOR_RGB(255, 115, 105)
-#define COLOR_MUTED            COLOR_RGB(205, 115, 145)     // dusty rose: history, inactive, cancel
-#define COLOR_YELLOW           COLOR_RGB(255, 225, 70)      // minor warning
-#define COLOR_ORANGE           COLOR_RGB(255, 180, 0)       // caution (amber)
+#define COLOR_RED              COLOR_RGB(225, 20, 30)       // bad, failed, broken
+#define COLOR_GREEN            COLOR_RGB(0, 195, 95)        // good
+#define COLOR_ACCENT           COLOR_RGB(210, 100, 20)      // mango: ready, links, hints
+#define COLOR_ROSE             COLOR_RGB(200, 40, 100)      // hot pink
+#define COLOR_CORAL            COLOR_RGB(210, 80, 70)
+#define COLOR_MUTED            COLOR_RGB(160, 80, 110)      // dusty rose: history, inactive, cancel
+#define COLOR_YELLOW           COLOR_RGB(220, 185, 45)      // minor warning
+#define COLOR_ORANGE           COLOR_RGB(220, 145, 0)       // caution (amber)
 
 // Global Traffic Counters
 extern volatile uint32_t g_rx_count;
@@ -36,6 +36,7 @@ void display_set_bench(bool bench);          // label Simos statuses as the benc
 
 // Portrait UI API
 void display_set_mode_view(const char *mode_title, const char *status_str, uint16_t state_color);
+void display_skip_splash(void);                // end the boot animation (a button was pressed)
 void display_update_traffic(uint32_t rx_count, uint32_t tx_count);
 
 // Debug panel inputs (cheap, safe to call from any task)
