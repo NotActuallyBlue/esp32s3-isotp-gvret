@@ -13,14 +13,15 @@ extern "C" {
 
 #define COLOR_BLACK            0x0000
 #define COLOR_WHITE            0xFFFF
-#define COLOR_RED              0x00F8
-#define COLOR_GREEN            0xE007
-#define COLOR_BLUE             0x1F00
-#define COLOR_DARKGREY         0x1042
-#define COLOR_MUTED            COLOR_RGB(190, 100, 230)     // orchid: history, inactive, cancel
-#define COLOR_CYAN             0xFF07
-#define COLOR_YELLOW           0xE0FF
-#define COLOR_ORANGE           0x00FD
+// Red, pink and mango theme. Green always means good and pure red always means bad or broken; nothing else uses them.
+#define COLOR_RED              COLOR_RGB(255, 25, 35)       // bad, failed, broken
+#define COLOR_GREEN            COLOR_RGB(0, 235, 110)       // good
+#define COLOR_ACCENT           COLOR_RGB(255, 140, 35)      // mango: ready, links, hints
+#define COLOR_ROSE             COLOR_RGB(255, 70, 140)      // hot pink
+#define COLOR_CORAL            COLOR_RGB(255, 115, 105)
+#define COLOR_MUTED            COLOR_RGB(205, 115, 145)     // dusty rose: history, inactive, cancel
+#define COLOR_YELLOW           COLOR_RGB(255, 225, 70)      // minor warning
+#define COLOR_ORANGE           COLOR_RGB(255, 180, 0)       // caution (amber)
 
 // Global Traffic Counters
 extern volatile uint32_t g_rx_count;

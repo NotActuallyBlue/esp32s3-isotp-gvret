@@ -340,18 +340,18 @@ static void show_menu(void)
         snprintf(label, sizeof(label), "%c %s", i == menu_cursor ? '>' : ' ', menu_items[i]);
         row(label, i == menu_cursor ? "[KEY]" : "", COLOR_YELLOW);
     }
-    row("#BUTTONS", "", COLOR_CYAN);
+    row("#BUTTONS", "", COLOR_ACCENT);
     row("BOOT", "next item", 0);
     row("KEY", "select", 0);
     if (scanned) {
-        row("#LAST SCAN", "", COLOR_CYAN);
+        row("#LAST SCAN", "", COLOR_ACCENT);
         rowf("MODULES", COLOR_WHITE, "%d", module_count);
         int codes = total_codes();
         rowf("CODES", codes ? COLOR_ORANGE : COLOR_GREEN, "%d", codes);
         if (total_history()) rowf("HISTORY", COLOR_MUTED, "%d", total_history());
     }
-    show("DIAGNOSTICS", COLOR_CYAN);
-    status("READY", COLOR_CYAN);
+    show("DIAGNOSTICS", COLOR_ACCENT);
+    status("READY", COLOR_ACCENT);
 }
 
 static void scan(void)
@@ -544,9 +544,9 @@ static void show_results(void)
         snprintf(hint, sizeof(hint), pages > 1 ? "BOOT more  KEY menu" : "KEY menu");
         char pg[24];
         snprintf(pg, sizeof(pg), "%d/%d", page + 1, pages);
-        row(pg, hint, COLOR_CYAN);
+        row(pg, hint, COLOR_ACCENT);
     } else {
-        row("KEY", "menu", COLOR_CYAN);
+        row("KEY", "menu", COLOR_ACCENT);
     }
     show("FAULT CODES", COLOR_ORANGE);
 
@@ -576,9 +576,9 @@ static void show_confirm(int held_ms)
         if (filled > 10) filled = 10;
         for (int i = 0; i < 10; i++) bar[i] = i < filled ? '#' : '-';
         bar[10] = 0;
-        row("HOLDING", bar, COLOR_CYAN);
+        row("HOLDING", bar, COLOR_ACCENT);
     } else {
-        row("HOLD KEY 2 s", "to clear", COLOR_CYAN);
+        row("HOLD KEY 2 s", "to clear", COLOR_ACCENT);
     }
     row("BOOT", "cancel", COLOR_MUTED);
     show("CLEAR CODES?", COLOR_ORANGE);
@@ -737,7 +737,7 @@ static void clear_all(void)
             row(m->name, m->clear_result, COLOR_ORANGE);
         }
     }
-    row("KEY", "menu", COLOR_CYAN);
+    row("KEY", "menu", COLOR_ACCENT);
     show("CLEAR RESULT", left ? COLOR_ORANGE : COLOR_GREEN);
 
     char text[32];
@@ -778,8 +778,8 @@ static void live_data(void)
                 row(obd_pid_name(pids[i]), values[i], seen[i] ? COLOR_WHITE : COLOR_MUTED);
             }
             row("", "", 0);
-            row("KEY", "back", COLOR_CYAN);
-            show("LIVE DATA", COLOR_CYAN);
+            row("KEY", "back", COLOR_ACCENT);
+            show("LIVE DATA", COLOR_ACCENT);
             status(answered_total ? "LIVE" : "NO DATA", answered_total ? COLOR_GREEN : COLOR_YELLOW);
         }
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -806,12 +806,12 @@ static void vehicle_info(void)
     }
 
     rows_reset();
-    row("#VEHICLE", "", COLOR_CYAN);
+    row("#VEHICLE", "", COLOR_ACCENT);
     row("", vin[0] ? vin : "VIN not available", vin[0] ? COLOR_WHITE : COLOR_MUTED);
     if (have_ready) {
         row("MIL", ready.mil_on ? "ON" : "OFF", ready.mil_on ? COLOR_RED : COLOR_GREEN);
         rowf("CONFIRMED", ready.dtc_count ? COLOR_ORANGE : COLOR_GREEN, "%u", ready.dtc_count);
-        row("#READINESS", "", COLOR_CYAN);
+        row("#READINESS", "", COLOR_ACCENT);
         for (int i = 0; i < OBD_READINESS_COUNT && row_count < 15; i++) {
             if (!(ready.supported & (1u << i))) continue;
             bool incomplete = ready.incomplete & (1u << i);
@@ -820,9 +820,9 @@ static void vehicle_info(void)
     } else {
         row("ENGINE ECU", "no answer", COLOR_YELLOW);
     }
-    row("KEY", "back", COLOR_CYAN);
-    show("VEHICLE INFO", COLOR_CYAN);
-    status(have_ready ? "INFO" : "NO DATA", have_ready ? COLOR_CYAN : COLOR_YELLOW);
+    row("KEY", "back", COLOR_ACCENT);
+    show("VEHICLE INFO", COLOR_ACCENT);
+    status(have_ready ? "INFO" : "NO DATA", have_ready ? COLOR_ACCENT : COLOR_YELLOW);
     ESP_LOGI(DIAG_TAG, "Vehicle info: VIN '%s', ready data %s", vin, have_ready ? "yes" : "no");
 }
 
@@ -907,7 +907,7 @@ static void diag_task(void *arg)
                         rows_reset();
                         row("NO CODES", "to clear", COLOR_GREEN);
                         rowf("MODULES", COLOR_WHITE, "%d", module_count);
-                        row("KEY", "menu", COLOR_CYAN);
+                        row("KEY", "menu", COLOR_ACCENT);
                         show("CLEAR CODES", COLOR_GREEN);
                         status("NO CODES", COLOR_GREEN);
                         ui = UI_NOTICE;

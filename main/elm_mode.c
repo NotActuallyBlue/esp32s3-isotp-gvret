@@ -131,22 +131,22 @@ static void update_screen(void)
     else                           snprintf(bus, sizeof(bus), "quiet %lus", (unsigned long)(quiet / 1000));
 
     display_detail_t d[] = {
-        { "#BLE",     "",                     COLOR_CYAN },
+        { "#BLE",     "",                     COLOR_ACCENT },
         { "NAME",     ELM_BLE_NAME,           COLOR_WHITE },
         { "STATE",    ble_value,              elm_ble_connected() ? COLOR_GREEN : COLOR_YELLOW },
-        { "#WI-FI",   "",                     COLOR_CYAN },
+        { "#WI-FI",   "",                     COLOR_ACCENT },
         { "SSID",     elm_wifi_ssid(),        COLOR_WHITE },
         { "PASSWORD", elm_wifi_password(),    COLOR_YELLOW },
         { "IP",       ELM_WIFI_IP,            COLOR_WHITE },
         { "PORT",     "35000",                COLOR_WHITE },
-        { "#ACTIVITY", "",                    COLOR_CYAN },
+        { "#ACTIVITY", "",                    COLOR_ACCENT },
         { "CLIENT",   client,                 clients_connected() ? COLOR_GREEN : COLOR_MUTED },
         { "LAST",     activity,               COLOR_WHITE },
         { "COMMANDS", count,                  COLOR_WHITE },
         { "CAN BUS",  bus,                    (quiet < 2000 || bench_mode) ? COLOR_GREEN : COLOR_MUTED },
     };
-    display_set_details("ELM327", COLOR_CYAN, d, sizeof(d) / sizeof(d[0]));
-    display_set_status("ELM327", clients_connected() ? "CONNECTED" : "READY", clients_connected() ? COLOR_GREEN : COLOR_CYAN);
+    display_set_details("ELM327", COLOR_ACCENT, d, sizeof(d) / sizeof(d[0]));
+    display_set_status("ELM327", clients_connected() ? "CONNECTED" : "READY", clients_connected() ? COLOR_GREEN : COLOR_ACCENT);
 }
 
 static void elm_task(void *arg)

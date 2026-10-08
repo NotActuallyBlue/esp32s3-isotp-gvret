@@ -20,6 +20,8 @@
 #include "esp_ota_ops.h"
 #include "esp_flash.h"
 #include "esp_heap_caps.h"
+#include "esp_sleep.h"
+#include "constants.h"
 
 #define TAG "DISPLAY"
 
@@ -66,7 +68,7 @@ typedef struct {
     bool            prompt;     // header and status only (used for the button menu)
 } display_view_t;
 
-static display_view_t       view            = { "STANDBY", "READY", COLOR_CYAN, false };
+static display_view_t       view            = { "STANDBY", "READY", COLOR_ACCENT, false };
 static bool                 view_dirty      = true;
 static portMUX_TYPE         state_lock      = portMUX_INITIALIZER_UNLOCKED;
 static TaskHandle_t         display_task_handle = NULL;
@@ -107,15 +109,15 @@ static uint16_t rgb(uint8_t r, uint8_t g, uint8_t b)
     return COLOR_RGB(r, g, b);
 }
 
-#define C_VALUE         rgb(235, 238, 245)
-#define C_LABEL         rgb(180, 140, 255)
-#define C_LINE          rgb(40, 48, 64)
-#define C_LINK          rgb(0, 200, 255)
-#define C_BUS           rgb(255, 70, 200)
-#define C_SYSTEM        rgb(255, 180, 0)
-#define C_GOOD          rgb(0, 235, 120)
-#define C_WARN          rgb(255, 170, 0)
-#define C_BAD           rgb(255, 60, 60)
+#define C_VALUE         rgb(255, 240, 235)
+#define C_LABEL         rgb(255, 160, 185)
+#define C_LINE          rgb(85, 30, 45)
+#define C_LINK          rgb(255, 140, 35)
+#define C_BUS           rgb(255, 70, 140)
+#define C_SYSTEM        rgb(255, 115, 105)
+#define C_GOOD          rgb(0, 235, 110)
+#define C_WARN          rgb(255, 200, 0)
+#define C_BAD           rgb(255, 25, 35)
 
 static bool display_on_color_trans_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t *edata, void *ctx)
 {
@@ -672,7 +674,7 @@ static void display_update_info(const display_view_t *v, uint32_t notify_rate)
     char key[32];
     snprintf(key, sizeof(key), "%lu", rx);
     if (strcmp(key, rx_key) != 0) {
-        draw_counter(COUNTERS_Y, "RX", rx, COLOR_CYAN);
+        draw_counter(COUNTERS_Y, "RX", rx, COLOR_ACCENT);
         strlcpy(rx_key, key, sizeof(rx_key));
     }
     snprintf(key, sizeof(key), "%lu", tx);
@@ -680,6 +682,76 @@ static void display_update_info(const display_view_t *v, uint32_t notify_rate)
         draw_counter(COUNTERS_Y + 24, "TX", tx, COLOR_WHITE);
         strlcpy(tx_key, key, sizeof(tx_key));
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Boot animation (about 1.9 s), drawn by the display task while the rest of the dongle starts up
+// ---------------------------------------------------------------------------------------------
+#define SPLASH_BRAND    "GHOSTWERKS"
+#define SPLASH_PRODUCT  "CANceiver"
+#define SPLASH_MS       1900
+
+static volatile bool    splash_active = false;
+static int64_t          splash_start_us;
+
+// Blend between two colors, f from 0 to 255
+static uint16_t mix_color(int r1, int g1, int b1, int r2, int g2, int b2, int f)
+{
+    return rgb((uint8_t)((r1 * (255 - f) + r2 * f) / 255), (uint8_t)((g1 * (255 - f) + g2 * f) / 255), (uint8_t)((b1 * (255 - f) + b2 * f) / 255));
+}
+
+static int clamp_int(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+static void splash_frame(int t)
+{
+    const int brand_len = (int)strlen(SPLASH_BRAND), product_len = (int)strlen(SPLASH_PRODUCT);
+    const int brand_x = (LCD_H_RES - brand_len * 16) / 2, product_x = (LCD_H_RES - product_len * 16) / 2;
+    const int top_y = 104, brand_y = 118, product_y = 150, under_y = 176;
+
+    // 1. a line sweeps out from the middle
+    int top_w = clamp_int(t * 150 / 350, 0, 150);
+    if (top_w > 0) display_fill_rect((LCD_H_RES - top_w) / 2, top_y, top_w, 2, COLOR_ROSE);
+
+    // 2. the brand appears letter by letter; the newest letter is white with a ghost on each side, then a highlight runs across
+    int shown = clamp_int((t - 300) / 65, 0, brand_len);
+    if (shown > 0) {
+        strip_begin(LCD_H_RES, FONT_LARGE_H, COLOR_BLACK);
+        int highlight = (t >= 1000) ? (t - 1000) / 45 : -10;
+        for (int i = 0; i < shown; i++) {
+            char c[2] = { SPLASH_BRAND[i], 0 };
+            bool newest = (i == shown - 1 && shown < brand_len);
+            if (newest) {
+                strip_text(brand_x + i * 16 - 4, 0, c, rgb(110, 25, 40), 2);
+                strip_text(brand_x + i * 16 + 4, 0, c, rgb(110, 25, 40), 2);
+            }
+        }
+        for (int i = 0; i < shown; i++) {
+            char c[2] = { SPLASH_BRAND[i], 0 };
+            bool newest = (i == shown - 1 && shown < brand_len);
+            uint16_t color = mix_color(255, 140, 35, 255, 70, 140, i * 255 / (brand_len - 1));
+            if (newest || i == highlight) color = rgb(255, 255, 255);
+            else if (i == highlight - 1) color = rgb(255, 205, 215);
+            strip_text(brand_x + i * 16, 0, c, color, 2);
+        }
+        display_push(0, brand_y, LCD_H_RES, FONT_LARGE_H);
+    }
+
+    // 3. the product name types in underneath: CAN in hot pink, the rest in warm white
+    int typed = clamp_int((t - 1000) / 55, 0, product_len);
+    if (typed > 0) {
+        strip_begin(LCD_H_RES, FONT_LARGE_H, COLOR_BLACK);
+        for (int i = 0; i < typed; i++) {
+            char c[2] = { SPLASH_PRODUCT[i], 0 };
+            uint16_t color = (i < 3) ? COLOR_ROSE : rgb(255, 240, 235);
+            if (i == typed - 1 && typed < product_len) color = rgb(255, 255, 255);
+            strip_text(product_x + i * 16, 0, c, color, 2);
+        }
+        display_push(0, product_y, LCD_H_RES, FONT_LARGE_H);
+    }
+
+    // 4. an underline closes it off
+    int under_w = clamp_int((t - 1350) * 160 / 350, 0, 160);
+    if (under_w > 0) display_fill_rect((LCD_H_RES - under_w) / 2, under_y, under_w, 2, COLOR_ACCENT);
 }
 
 static void display_task(void *pvParameters)
@@ -690,6 +762,19 @@ static void display_task(void *pvParameters)
     display_view_t current = view;
 
     while (1) {
+        if (splash_active) {
+            int t = (int)((esp_timer_get_time() - splash_start_us) / 1000);
+            if (t < SPLASH_MS) {
+                splash_frame(t);
+                vTaskDelay(pdMS_TO_TICKS(30));
+                continue;
+            }
+            splash_active = false;
+            taskENTER_CRITICAL(&state_lock);
+                view_dirty = true;      // the first real screen replaces the animation
+            taskEXIT_CRITICAL(&state_lock);
+        }
+
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(250));
 
         bool dirty;
@@ -968,5 +1053,12 @@ void display_init(void)
     if (display_timer) xTimerStart(display_timer, 0);
 
     // The task draws the initial view (view_dirty is already set)
+    // Boot animation, except when a burst of CAN traffic woke the dongle from sleep in a parked car: no need to light up then
+    bool woke_by_can = esp_reset_reason() == ESP_RST_DEEPSLEEP && (esp_sleep_get_ext1_wakeup_status() & (1ULL << CAN_RX_PORT));
+    if (!woke_by_can) {
+        display_clear(COLOR_BLACK);
+        splash_start_us = esp_timer_get_time();
+        splash_active = true;
+    }
     xTaskCreate(display_task, "Display", 6144, NULL, tskIDLE_PRIORITY + 1, &display_task_handle);
 }

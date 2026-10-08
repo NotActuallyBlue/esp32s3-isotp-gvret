@@ -221,7 +221,7 @@ void ota_update_start(void)
     display_set_detail(0, "WIFI", ap_ssid);
     display_set_detail(1, "PASSWORD", ap_password);
     display_set_detail(2, "OPEN", "192.168.4.1");
-    display_set_status("UPDATE", "READY", COLOR_CYAN);
+    display_set_status("UPDATE", "READY", COLOR_ACCENT);
 
 #ifdef FORCE_WIFI_UPDATE
     ESP_LOGW(OTA_TAG, "TEST BUILD: Wi-Fi password is %s", ap_password);     // normal builds only show it on the screen

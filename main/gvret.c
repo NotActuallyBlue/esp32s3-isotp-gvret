@@ -231,20 +231,20 @@ static void gvret_screen_task(void *arg)
         snprintf(lost_text, sizeof(lost_text), "%lu", (unsigned long)lost);
 
         display_detail_t d[] = {
-            { "#WI-FI",    "",                            COLOR_CYAN },
+            { "#WI-FI",    "",                            COLOR_ACCENT },
             { "SSID",      elm_wifi_ssid(),               COLOR_WHITE },
             { "PASSWORD",  elm_wifi_password(),           COLOR_YELLOW },
             { "IP",        ELM_WIFI_IP,                   COLOR_WHITE },
             { "PORT",      port,                          COLOR_WHITE },
-            { "#CAPTURE",  "",                            COLOR_CYAN },
+            { "#CAPTURE",  "",                            COLOR_ACCENT },
             { "CLIENT",    net ? "Wi-Fi" : (usb ? "USB" : "none"), (net || usb) ? COLOR_GREEN : COLOR_MUTED },
             { "FRAMES RX", rx,                            COLOR_WHITE },
             { "FRAMES TX", tx,                            COLOR_WHITE },
             { "CAN BUS",   state,                         state_color },
             { "FRAMES LOST", lost_text,                   lost ? COLOR_RED : COLOR_GREEN },
         };
-        display_set_details("SAVVYCAN", COLOR_CYAN, d, sizeof(d) / sizeof(d[0]));
-        display_set_status("SAVVYCAN", (net || usb) ? "CONNECTED" : "READY", (net || usb) ? COLOR_GREEN : COLOR_CYAN);
+        display_set_details("SAVVYCAN", COLOR_ACCENT, d, sizeof(d) / sizeof(d[0]));
+        display_set_status("SAVVYCAN", (net || usb) ? "CONNECTED" : "READY", (net || usb) ? COLOR_GREEN : COLOR_ACCENT);
         static uint32_t last_lost;
         if (lost != last_lost) {
             ESP_LOGW(GVRET_TAG, "CAN frames lost because the reader fell behind: %lu so far", (unsigned long)lost);

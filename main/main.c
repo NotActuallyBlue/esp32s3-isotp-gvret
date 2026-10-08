@@ -94,7 +94,7 @@ void app_main(void)
         } else {
             ESP_LOGI(MAIN_TAG, "Booting in SIMOS BLE ISO-TP Mode");
         }
-        display_set_status("BLE ISO-TP", "READY", COLOR_CYAN);
+        display_set_status("BLE ISO-TP", "READY", COLOR_ACCENT);
 
         // Core hardware & protocol stacks for Simos BLE
         ble_server_init();
@@ -135,13 +135,13 @@ void app_main(void)
     } 
     else if (current_mode == OP_MODE_DIAG) {
         ESP_LOGI(MAIN_TAG, "Booting in DIAG Mode%s", bench ? " (bench simulator)" : "");
-        display_set_status("DIAG", "READY", COLOR_CYAN);
+        display_set_status("DIAG", "READY", COLOR_ACCENT);
         diag_start(bench);
         if (!bench) power_mgr_start(NULL);
     }
     else if (current_mode == OP_MODE_ELM327) {
         ESP_LOGI(MAIN_TAG, "Booting in ELM327 Mode%s", bench ? " (bench simulator)" : "");
-        display_set_status("ELM327", "READY", COLOR_CYAN);
+        display_set_status("ELM327", "READY", COLOR_ACCENT);
         elm_mode_start(bench);
         if (!bench) power_mgr_start(elm_mode_clients_connected);
     }
@@ -151,7 +151,7 @@ void app_main(void)
     }
     else if (current_mode == OP_MODE_SAVVYCAN_GVRET) {
         ESP_LOGI(MAIN_TAG, "Booting in SavvyCAN GVRET Mode%s", bench ? " (bench simulator)" : "");
-        display_set_status("SAVVYCAN", "READY", COLOR_CYAN);
+        display_set_status("SAVVYCAN", "READY", COLOR_ACCENT);
 
         // The GVRET task is the only reader of CAN frames here, so the receive task of the Simos bridge is not started
         if (!bench) {

@@ -87,7 +87,7 @@ static void show_prompt(hold_zone_t zone)
         return;
     }
     switch (zone) {
-        case ZONE_BENCH:  display_set_prompt("RELEASE FOR", "BENCH SIM",   COLOR_CYAN);   break;
+        case ZONE_BENCH:  display_set_prompt("RELEASE FOR", "BENCH SIM",   COLOR_ACCENT);   break;
         case ZONE_UPDATE: display_set_prompt("RELEASE FOR", "WIFI UPDATE", COLOR_ORANGE); break;
         case ZONE_CANCEL: display_set_prompt("RELEASE TO",  "CANCEL",      COLOR_MUTED); break;
         default: break;
@@ -107,7 +107,7 @@ static void restart_with(hold_zone_t zone)
         case ZONE_BENCH:
             ESP_LOGI(TAG, "Restarting into the bench simulator (one-shot)");
             mode_mgr_request_oneshot(OP_MODE_BENCH_SIM);
-            display_set_prompt("BENCH SIM", "REBOOTING", COLOR_CYAN);
+            display_set_prompt("BENCH SIM", "REBOOTING", COLOR_ACCENT);
             break;
         case ZONE_UPDATE:
             ESP_LOGI(TAG, "Restarting into Wi-Fi update mode (one-shot)");

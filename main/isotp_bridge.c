@@ -652,7 +652,7 @@ void bridge_connect(void)
 void bridge_disconnect(void)
 {
     persist_clear();
-    display_set_status("BLE ISO-TP", "READY", COLOR_CYAN);
+    display_set_status("BLE ISO-TP", "READY", COLOR_ACCENT);
 }
 
 void ch_on_uart_connect(void) { bridge_connect(); }
