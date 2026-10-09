@@ -385,7 +385,7 @@ static int build_rows_status(const display_view_t *v, row_t *rows, uint32_t noti
         } else { snprintf(r->value, sizeof(r->value), "--"); r->color = C_LABEL; }
         if (!ble_access_open()) {
             r = add_data(rows, &n, "BLE LOCKED");
-            snprintf(r->value, sizeof(r->value), "tap BOOT");
+            snprintf(r->value, sizeof(r->value), "hold KEY");
             r->color = C_WARN;
         }
         r = add_data(rows, &n, "STREAM");
@@ -962,6 +962,9 @@ void display_set_pairing_info(const char *line1, const char *line2, const char *
 {
     const char *lines[4] = { line1, line2, line3, line4 };
     for (int i = 0; i < 4; i++) strlcpy(pairing_info[i], lines[i] ? lines[i] : "", sizeof(pairing_info[i]));
+#ifdef ELM_LOG_PASSWORD
+    ESP_LOGW(TAG, "TEST BUILD: pairing screen lines: '%s' | '%s' | '%s' | '%s'", pairing_info[0], pairing_info[1], pairing_info[2], pairing_info[3]);
+#endif
 }
 
 void display_pairing_begin(int seconds)

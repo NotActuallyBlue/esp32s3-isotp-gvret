@@ -122,7 +122,7 @@ static void update_screen(void)
     char ble_value[24], activity[24], count[24], bus[24];
     const char *client = elm_ble_connected() ? "BLE" : (elm_wifi_connected() ? "WI-FI" : "none");
 
-    snprintf(ble_value, sizeof(ble_value), "%s", elm_ble_connected() ? "CONNECTED" : (ble_access_open() ? "ADVERTISING" : "LOCKED: BOOT"));
+    snprintf(ble_value, sizeof(ble_value), "%s", elm_ble_connected() ? "CONNECTED" : (ble_access_open() ? "ADVERTISING" : "LOCKED (KEY)"));
     snprintf(activity, sizeof(activity), "%s", last_cmd[0] ? last_cmd : "--");
     snprintf(count, sizeof(count), "%lu", (unsigned long)command_count);
     uint32_t quiet = diag_can_ms_since_rx();
@@ -185,7 +185,9 @@ void elm_mode_start(bool bench)
     diag_can_start(bench);
     stackwatch_create(elm_task, "elm", 8192, NULL, 2);
     elm_ble_start(on_ble_rx, on_link);
+    elm_wifi_start(on_wifi_rx, on_link);
     if (!bench) {
+        // after the Wi-Fi start: the password is created or read there
         char ble[24], ssid[24], pass[24], addr[24];
         snprintf(ble, sizeof(ble), "BLE: %s", ELM_BLE_NAME);
         snprintf(ssid, sizeof(ssid), "Wi-Fi: %s", elm_wifi_ssid());
@@ -194,7 +196,6 @@ void elm_mode_start(bool bench)
         display_set_pairing_info(ble, ssid, pass, addr);
         ble_access_start(clients_connected, elm_adv_on, elm_adv_off, NULL);
     }
-    elm_wifi_start(on_wifi_rx, on_link);
     ESP_LOGI(ELM_TAG, "ELM327 emulation running (BLE '%s', Wi-Fi %s:%d)", ELM_BLE_NAME, ELM_WIFI_IP, ELM_WIFI_PORT);
 }
 

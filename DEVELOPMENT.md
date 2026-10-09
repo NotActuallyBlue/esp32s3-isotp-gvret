@@ -218,7 +218,7 @@ returns within a second of the first answer. The bench simulator is never "quiet
 
 `tools/gen_qr.py` (needs `pip install segno`) makes `main/about_qr.c`, a table of the QR code's modules for the project URL, so the dongle needs no
 QR encoder. Change `DEFAULT_URL` or pass `--url`, run it, rebuild. It is version 4 with medium error correction, so up to 62 bytes of URL fit.
-The table is drawn at 4 pixels per module with the quiet zone a scanner needs. KEY held for 3 s opens the screen in every mode except Diag (which has
+The table is drawn at 4 pixels per module with the quiet zone a scanner needs. KEY held for 5 s opens the screen in every mode except Diag (which has
 an ABOUT menu item) and the update mode.
 
 ## Screens
@@ -235,7 +235,8 @@ an ABOUT menu item) and the update mode.
 
 ## Bluetooth access window
 
-`ble_access.c` stops BLE advertising after `BLE_ACCESS_WINDOW_MS` (60 s) without a connection and starts it again on a BOOT or KEY press (`ble_access_poke`).
+`ble_access.c` stops BLE advertising after `BLE_ACCESS_WINDOW_MS` (60 s) without a connection and starts it again when KEY is held for 2 s (`ble_access_poke`).
+The KEY rules (2 s reopen, 5 s About, a press hides the Pairing Mode screen) are in `key_logic.c` with host tests in `test/test_key`.
 It runs in Simos and ELM327 mode on a real bus; the bench simulator never locks, so the desktop probes can connect at any time. A connected app
 keeps the window open and the minute restarts after it disconnects. The Wi-Fi modes keep their WPA2 password and no lockout. Test builds:
 `-DACCESS_TEST_POKE_AT=100` pretends a button press 100 s after start (see `scan` in the notes: check the advertisement is present at 25 s, gone

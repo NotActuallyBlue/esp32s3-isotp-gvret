@@ -10,6 +10,7 @@
 #include "display.h"
 #include "stackwatch.h"
 #include "ble_access.h"
+#include "key_logic.h"
 
 #define TAG "MODE_MGR"
 #define NVS_NAMESPACE "dongle_cfg"
@@ -126,19 +127,17 @@ static void restart_with(hold_zone_t zone)
     esp_restart();
 }
 
-// KEY (the second button): hold it for 3 s to open the About screen with the QR code. Diag mode uses KEY for its own menu (it has an
-// ABOUT item) and the update mode must keep its progress on screen.
+// KEY (the second button) in the modes that do not use it: a 2 s hold opens Bluetooth again after it locked, a 5 s hold shows the About
+// screen with the QR code. Diag mode uses KEY for its own menu (it has an ABOUT item) and the update mode keeps its progress on screen.
+// The rules are in key_logic.c.
 #define KEY_BUTTON_PIN   14
-#define ABOUT_HOLD_MS    3000
-#define ABOUT_SHOW_MS    90000
 
 static void mode_button_monitor_task(void *pvParameters)
 {
     int held_ms = 0;
     bool woke_screen = false;
     hold_zone_t shown = ZONE_NONE;
-    int key_held_ms = 0, about_open_ms = 0;
-    bool key_was_down = false, about_can_close = false, key_block = false;
+    key_state_t key = { 0 };
     bool about_allowed = current_mode != OP_MODE_DIAG && current_mode != OP_MODE_WIFI_UPDATE;
 
     if (about_allowed) {
@@ -154,32 +153,12 @@ static void mode_button_monitor_task(void *pvParameters)
 
     while (1) {
         if (about_allowed) {
-            bool key_down = gpio_get_level(KEY_BUTTON_PIN) == 0;
-            if (display_about_active()) {
-                about_open_ms += BUTTON_POLL_MS;
-                if (!key_down) about_can_close = true;                  // the press that opened it has been let go
-                if ((key_down && !key_was_down && about_can_close) || about_open_ms >= ABOUT_SHOW_MS) {
-                    display_show_about(false);
-                    about_can_close = false;
-                    key_block = true;                                   // a long closing press must not open it again
-                }
-            } else if (!key_down) {
-                key_held_ms = 0;
-                key_block = false;
-            } else if (!key_block) {
-                key_held_ms += BUTTON_POLL_MS;
-                if (key_held_ms >= ABOUT_HOLD_MS) {
-                    display_show_about(true);
-                    about_open_ms = 0;
-                    about_can_close = false;
-                    key_held_ms = 0;
-                }
-            }
-            if (key_down && !key_was_down) {
-                if (display_pairing_active()) display_pairing_end();
-                else ble_access_poke();
-            }
-            key_was_down = key_down;
+            key_actions_t act = key_step(&key, gpio_get_level(KEY_BUTTON_PIN) == 0, BUTTON_POLL_MS, !ble_access_open(),
+                                         display_pairing_active(), display_about_active());
+            if (act.hide_pairing) display_pairing_end();
+            if (act.reopen_bluetooth) ble_access_poke();
+            if (act.show_about) display_show_about(true);
+            if (act.hide_about) display_show_about(false);
         }
 
         // BOOT button is active LOW (0 when pressed)
@@ -188,9 +167,6 @@ static void mode_button_monitor_task(void *pvParameters)
                 woke_screen = !display_is_awake();      // the first press only wakes a sleeping screen
                 if (display_pairing_active()) {                 // a press hides the Pairing Mode screen and does nothing else
                     display_pairing_end();
-                    woke_screen = true;
-                } else if (!ble_access_open()) {                // a press that opens Bluetooth again does nothing else
-                    ble_access_poke();
                     woke_screen = true;
                 }
                 if (display_about_active()) {           // any BOOT press closes the About screen and does nothing else

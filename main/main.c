@@ -141,7 +141,7 @@ void app_main(void)
             power_mgr_start(ble_busy);
             char gap[24];
             ble_get_gap_name(gap);
-            display_set_pairing_info("Bluetooth name", gap, "", "");
+            display_set_pairing_info("Bluetooth name", gap, "", "Connect from your app");
             ble_access_start(ble_busy, ble_start_advertising, ble_stop_advertising, simos_access_changed);
         }
     } 

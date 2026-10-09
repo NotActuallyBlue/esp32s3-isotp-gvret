@@ -60,10 +60,11 @@ release when you see the mode you want.
 **Pairing Mode.** After the 3-second start-up animation, Simos, SavvyCAN and ELM327 mode show a **PAIRING MODE** screen with a one-minute
 countdown, the Bluetooth name and, where it applies, the Wi-Fi name, password and address. Connect your app while it counts down. It goes away
 as soon as something connects, when the minute is up, or when you press any button. In Simos and ELM327 mode Bluetooth stops accepting new
-connections when the minute ends (the screen says **LOCKED**); tap **BOOT** to open it, and the Pairing Mode screen, for another minute.
+connections when the minute ends (the screen says **LOCKED**); **hold KEY for 2 seconds** to open it, and the Pairing Mode screen, for another minute.
+Simos Bluetooth has no password, so its screen shows only the name; the Wi-Fi modes show the Wi-Fi password.
 SavvyCAN uses Wi-Fi only, so its screen is a reminder of the network details and nothing locks. Diag mode goes straight to its menu.
 
-**About screen.** Hold **KEY** for 3 seconds (in Diag mode, choose **ABOUT** in the menu) to show a QR code that opens this project's page on
+**About screen.** Hold **KEY** for 5 seconds (in Diag mode, choose **ABOUT** in the menu) to show a QR code that opens this project's page on
 GitHub, along with the product name and firmware build. Any button closes it.
 
 The mode you pick is remembered. Bench sim and Wi-Fi update last for one session only: unplug the dongle and plug it back in to return
@@ -193,7 +194,7 @@ You can update over Wi-Fi without any cable.
 
 | Problem | Try this |
 |---|---|
-| The dongle does not show in the app | If the screen says **LOCKED**, tap **BOOT** to open Bluetooth for another minute. Also make sure no other phone is connected to it, or unplug it and plug it back in, then look for **BLE_TO_ISOTP20** (Simos mode) or **ISOTP-ELM327**. |
+| The dongle does not show in the app | If the screen says **LOCKED**, hold **KEY** for 2 seconds to open Bluetooth for another minute. Also make sure no other phone is connected to it, or unplug it and plug it back in, then look for **BLE_TO_ISOTP20** (Simos mode) or **ISOTP-ELM327**. |
 | Nothing answers, or the screen says BUS SILENT | Turn the ignition on and wait a few seconds. Some cars need the engine running before the OBD port wakes. |
 | A code comes straight back after clearing | The fault is still present. Fix the cause, then clear again. |
 | A module says NOT SUPP, NOT NOW, SECURITY or SESSION when clearing | It refused the request. Other tools may use a method this dongle does not support. |
@@ -222,7 +223,7 @@ You can update over Wi-Fi without any cable.
 * **Do not connect USB to a computer while the dongle is in the car.**
 * The Bluetooth connection cannot have a password (the apps do not support one), so the dongle limits when it accepts connections. In
   Simos and ELM327 mode it takes new Bluetooth connections for **one minute** after it starts and after every button press, then stops
-  advertising and the screen shows **LOCKED**. Tap **BOOT** to open it for another minute. An app that is already connected is never cut
+  advertising and the screen shows **LOCKED**. Hold **KEY** for 2 seconds to open it for another minute. An app that is already connected is never cut
   off, and the minute starts again when it disconnects. The Wi-Fi networks use a password, which is shown on the dongle's screen. Unplug the
   dongle when you are not using it.
 * Modifying a vehicle's emissions equipment or its emissions-related software can be illegal for road use where you live. This dongle only
