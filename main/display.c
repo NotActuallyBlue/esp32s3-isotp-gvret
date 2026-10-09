@@ -16,6 +16,7 @@
 #include "flashlog.h"
 #include "font.h"
 #include "about_qr.h"
+#include "ble_access.h"
 #include "canstats.h"
 #include "esp_app_desc.h"
 #include "esp_ota_ops.h"
@@ -375,6 +376,11 @@ static int build_rows_status(const display_view_t *v, row_t *rows, uint32_t noti
             snprintf(r->value, sizeof(r->value), "%lu.%lu ms", (unsigned long)(x100 / 100), (unsigned long)((x100 % 100) / 10));
             r->color = ci <= 24 ? C_GOOD : C_WARN;
         } else { snprintf(r->value, sizeof(r->value), "--"); r->color = C_LABEL; }
+        if (!ble_access_open()) {
+            r = add_data(rows, &n, "BLE LOCKED");
+            snprintf(r->value, sizeof(r->value), "tap BOOT");
+            r->color = C_WARN;
+        }
         r = add_data(rows, &n, "STREAM");
         if (info_persist) { snprintf(r->value, sizeof(r->value), "ON  %lu/s", (unsigned long)notify_rate); r->color = C_GOOD; }
         else { snprintf(r->value, sizeof(r->value), "OFF"); r->color = C_LABEL; }
@@ -812,12 +818,13 @@ static void display_draw_about(void)
     display_fill_rect(0, 0, LCD_H_RES, HEADER_H, COLOR_ACCENT);
     display_draw_text_ex(0, (HEADER_H - text_height(2)) / 2, LCD_H_RES, "ABOUT", COLOR_BLACK, COLOR_ACCENT, 2, true, true);
 
-    // dark modules on a white card with the quiet zone a scanner needs
-    display_fill_rect(card_x, card_y, card, card, COLOR_WHITE);
+    // Deep crimson modules on a warm cream card: still far darker than the background, which is what scanners need, and it matches the theme
+    const uint16_t qr_light = rgb(250, 234, 226), qr_dark = rgb(115, 10, 40);
+    display_fill_rect(card_x, card_y, card, card, qr_light);
     for (int row = 0; row < ABOUT_QR_SIZE; row++) {
-        strip_begin(ABOUT_QR_SIZE * scale, scale, COLOR_WHITE);
+        strip_begin(ABOUT_QR_SIZE * scale, scale, qr_light);
         for (int col = 0; col < ABOUT_QR_SIZE; col++) {
-            if (about_qr_rows[row][col / 8] & (0x80 >> (col % 8))) strip_fill(col * scale, 0, scale, scale, COLOR_BLACK);
+            if (about_qr_rows[row][col / 8] & (0x80 >> (col % 8))) strip_fill(col * scale, 0, scale, scale, qr_dark);
         }
         display_push(card_x + quiet * scale, card_y + (quiet + row) * scale, ABOUT_QR_SIZE * scale, scale);
     }

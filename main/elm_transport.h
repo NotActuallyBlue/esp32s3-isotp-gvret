@@ -16,6 +16,7 @@ typedef void (*elm_link_cb)(bool connected);
 void     elm_ble_start(elm_rx_cb rx, elm_link_cb link);
 void     elm_ble_send(const uint8_t *data, size_t len);
 bool     elm_ble_connected(void);
+void     elm_ble_set_advertising(bool on);     // false: stop advertising and do not restart it after a disconnect
 uint16_t elm_ble_mtu(void);
 #define  ELM_BLE_NAME   "ISOTP-ELM327"
 

@@ -9,6 +9,7 @@
 #include "freertos/task.h"
 #include "display.h"
 #include "stackwatch.h"
+#include "ble_access.h"
 
 #define TAG "MODE_MGR"
 #define NVS_NAMESPACE "dongle_cfg"
@@ -174,6 +175,7 @@ static void mode_button_monitor_task(void *pvParameters)
                     key_held_ms = 0;
                 }
             }
+            if (key_down && !key_was_down) ble_access_poke();
             key_was_down = key_down;
         }
 
@@ -181,6 +183,8 @@ static void mode_button_monitor_task(void *pvParameters)
         if (gpio_get_level(BOOT_BUTTON_PIN) == 0) {
             if (held_ms == 0) {
                 woke_screen = !display_is_awake();      // the first press only wakes a sleeping screen
+                if (!ble_access_open()) woke_screen = true;     // a press that opens Bluetooth does nothing else
+                ble_access_poke();
                 if (display_about_active()) {           // any BOOT press closes the About screen and does nothing else
                     display_show_about(false);
                     woke_screen = true;

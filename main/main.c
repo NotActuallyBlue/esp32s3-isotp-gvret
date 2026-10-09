@@ -35,6 +35,7 @@
 #include "canstats.h"
 #include "driver/twai.h"
 #include "stackwatch.h"
+#include "ble_access.h"
 
 SemaphoreHandle_t sync_task_sem = NULL;
 
@@ -42,6 +43,10 @@ SemaphoreHandle_t sync_task_sem = NULL;
 
 static bool ble_busy(void) {
     return ble_connected();
+}
+
+static void simos_access_changed(bool open) {
+    display_set_status("BLE ISO-TP", open ? "READY" : "LOCKED", open ? COLOR_ACCENT : COLOR_YELLOW);
 }
 
 static void app_ble_connected(void) {
@@ -131,7 +136,10 @@ void app_main(void)
         ch_start_task();
 
         ESP_LOGI(MAIN_TAG, "Simos BLE services running.");
-        if (!bench) power_mgr_start(ble_busy);
+        if (!bench) {
+            power_mgr_start(ble_busy);
+            ble_access_start(ble_busy, ble_start_advertising, ble_stop_advertising, simos_access_changed);
+        }
     } 
     else if (current_mode == OP_MODE_DIAG) {
         ESP_LOGI(MAIN_TAG, "Booting in DIAG Mode%s", bench ? " (bench simulator)" : "");

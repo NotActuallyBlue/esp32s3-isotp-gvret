@@ -61,6 +61,7 @@ static esp_gatt_if_t        gatts_if_saved = ESP_GATT_IF_NONE;
 static uint16_t             conn_id_saved = 0xFFFF;
 static volatile bool        connected;
 static volatile bool        congested;
+static volatile bool        adv_allowed = true;     // false while the access window is closed
 static uint16_t             mtu = DEFAULT_MTU;
 static elm_rx_cb            rx_cb;
 static elm_link_cb          link_cb;
@@ -80,6 +81,13 @@ static esp_ble_adv_params_t adv_params = {
 };
 
 bool elm_ble_connected(void) { return connected; }
+
+void elm_ble_set_advertising(bool on)
+{
+    adv_allowed = on;
+    if (on) esp_ble_gap_start_advertising(&adv_params);
+    else esp_ble_gap_stop_advertising();
+}
 uint16_t elm_ble_mtu(void) { return mtu; }
 
 void elm_ble_send(const uint8_t *data, size_t len)
@@ -103,7 +111,7 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
 {
     switch (event) {
     case ESP_GAP_BLE_ADV_DATA_RAW_SET_COMPLETE_EVT:
-        esp_ble_gap_start_advertising(&adv_params);
+        if (adv_allowed) esp_ble_gap_start_advertising(&adv_params);
         break;
     case ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT:
         display_set_ble_info(mtu, param->update_conn_params.conn_int);
@@ -177,7 +185,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
         display_set_ble_info(0, 0);
         ESP_LOGI(BLE_TAG, "Client disconnected, advertising again");
         if (link_cb) link_cb(false);
-        esp_ble_gap_start_advertising(&adv_params);
+        if (adv_allowed) esp_ble_gap_start_advertising(&adv_params);
         break;
     case ESP_GATTS_CONGEST_EVT:
         congested = param->congest.congested;

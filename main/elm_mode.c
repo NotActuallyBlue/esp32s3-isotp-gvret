@@ -13,6 +13,7 @@
 #include "elm_mode.h"
 #include "power_mgr.h"
 #include "stackwatch.h"
+#include "ble_access.h"
 
 #define ELM_TAG             "ElmMode"
 #define IN_CHUNK            64
@@ -121,7 +122,7 @@ static void update_screen(void)
     char ble_value[24], activity[24], count[24], bus[24];
     const char *client = elm_ble_connected() ? "BLE" : (elm_wifi_connected() ? "WI-FI" : "none");
 
-    snprintf(ble_value, sizeof(ble_value), "%s", elm_ble_connected() ? "CONNECTED" : "ADVERTISING");
+    snprintf(ble_value, sizeof(ble_value), "%s", elm_ble_connected() ? "CONNECTED" : (ble_access_open() ? "ADVERTISING" : "LOCKED: BOOT"));
     snprintf(activity, sizeof(activity), "%s", last_cmd[0] ? last_cmd : "--");
     snprintf(count, sizeof(count), "%lu", (unsigned long)command_count);
     uint32_t quiet = diag_can_ms_since_rx();
@@ -169,6 +170,9 @@ static void elm_task(void *arg)
     }
 }
 
+static void elm_adv_on(void)  { elm_ble_set_advertising(true); }
+static void elm_adv_off(void) { elm_ble_set_advertising(false); }
+
 void elm_mode_start(bool bench)
 {
     bench_mode = bench;
@@ -181,6 +185,7 @@ void elm_mode_start(bool bench)
     diag_can_start(bench);
     stackwatch_create(elm_task, "elm", 8192, NULL, 2);
     elm_ble_start(on_ble_rx, on_link);
+    if (!bench) ble_access_start(elm_ble_connected, elm_adv_on, elm_adv_off, NULL);
     elm_wifi_start(on_wifi_rx, on_link);
     ESP_LOGI(ELM_TAG, "ELM327 emulation running (BLE '%s', Wi-Fi %s:%d)", ELM_BLE_NAME, ELM_WIFI_IP, ELM_WIFI_PORT);
 }

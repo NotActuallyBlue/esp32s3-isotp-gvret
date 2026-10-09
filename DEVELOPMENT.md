@@ -221,6 +221,14 @@ QR encoder. Change `DEFAULT_URL` or pass `--url`, run it, rebuild. It is version
 The table is drawn at 4 pixels per module with the quiet zone a scanner needs. KEY held for 3 s opens the screen in every mode except Diag (which has
 an ABOUT menu item) and the update mode.
 
+## Bluetooth access window
+
+`ble_access.c` stops BLE advertising after `BLE_ACCESS_WINDOW_MS` (60 s) without a connection and starts it again on a BOOT or KEY press (`ble_access_poke`).
+It runs in Simos and ELM327 mode on a real bus; the bench simulator never locks, so the desktop probes can connect at any time. A connected app
+keeps the window open and the minute restarts after it disconnects. The Wi-Fi modes keep their WPA2 password and no lockout. Test builds:
+`-DACCESS_TEST_POKE_AT=100` pretends a button press 100 s after start (see `scan` in the notes: check the advertisement is present at 25 s, gone
+at 80 s and back at 118 s).
+
 ## Flash log numbering
 
 Boot numbers run 1 to 100 and start over (`FLASHLOG_BOOT_WRAP`). The newest log is the one whose number is ahead of the others by fewer than the

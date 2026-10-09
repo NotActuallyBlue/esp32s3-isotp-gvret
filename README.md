@@ -187,7 +187,7 @@ You can update over Wi-Fi without any cable.
 
 | Problem | Try this |
 |---|---|
-| The dongle does not show in the app | Make sure no other phone is connected to it. Unplug it, plug it back in, and look for **BLE_TO_ISOTP20** (Simos mode) or **ISOTP-ELM327**. |
+| The dongle does not show in the app | If the screen says **LOCKED**, tap **BOOT** to open Bluetooth for another minute. Also make sure no other phone is connected to it, or unplug it and plug it back in, then look for **BLE_TO_ISOTP20** (Simos mode) or **ISOTP-ELM327**. |
 | Nothing answers, or the screen says BUS SILENT | Turn the ignition on and wait a few seconds. Some cars need the engine running before the OBD port wakes. |
 | A code comes straight back after clearing | The fault is still present. Fix the cause, then clear again. |
 | A module says NOT SUPP, NOT NOW, SECURITY or SESSION when clearing | It refused the request. Other tools may use a method this dongle does not support. |
@@ -214,8 +214,11 @@ You can update over Wi-Fi without any cable.
   (including flashing) can damage it or void a warranty. Use the dongle on your own vehicle and at your own risk. Keep the battery
   charged and the ignition on, with the engine off, during flashing.
 * **Do not connect USB to a computer while the dongle is in the car.**
-* The Bluetooth connection is not password protected, so anyone within range could connect to the dongle while it is powered. The Wi-Fi
-  networks use a password, which is shown on the dongle's screen. Unplug the dongle when you are not using it.
+* The Bluetooth connection cannot have a password (the apps do not support one), so the dongle limits when it accepts connections. In
+  Simos and ELM327 mode it takes new Bluetooth connections for **one minute** after it starts and after every button press, then stops
+  advertising and the screen shows **LOCKED**. Tap **BOOT** to open it for another minute. An app that is already connected is never cut
+  off, and the minute starts again when it disconnects. The Wi-Fi networks use a password, which is shown on the dongle's screen. Unplug the
+  dongle when you are not using it.
 * Modifying a vehicle's emissions equipment or its emissions-related software can be illegal for road use where you live. This dongle only
   reports what a control unit says; you are responsible for complying with local law.
 * Volkswagen, Audi, Golf, GTI, ELM327, Bluetooth and the other names used here belong to their owners. This product is not affiliated with or
