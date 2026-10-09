@@ -175,7 +175,10 @@ static void mode_button_monitor_task(void *pvParameters)
                     key_held_ms = 0;
                 }
             }
-            if (key_down && !key_was_down) ble_access_poke();
+            if (key_down && !key_was_down) {
+                if (display_pairing_active()) display_pairing_end();
+                else ble_access_poke();
+            }
             key_was_down = key_down;
         }
 
@@ -183,14 +186,18 @@ static void mode_button_monitor_task(void *pvParameters)
         if (gpio_get_level(BOOT_BUTTON_PIN) == 0) {
             if (held_ms == 0) {
                 woke_screen = !display_is_awake();      // the first press only wakes a sleeping screen
-                if (!ble_access_open()) woke_screen = true;     // a press that opens Bluetooth does nothing else
-                ble_access_poke();
+                if (display_pairing_active()) {                 // a press hides the Pairing Mode screen and does nothing else
+                    display_pairing_end();
+                    woke_screen = true;
+                } else if (!ble_access_open()) {                // a press that opens Bluetooth again does nothing else
+                    ble_access_poke();
+                    woke_screen = true;
+                }
                 if (display_about_active()) {           // any BOOT press closes the About screen and does nothing else
                     display_show_about(false);
                     woke_screen = true;
                 }
                 display_power(true);
-                display_skip_splash();
             }
             held_ms += BUTTON_POLL_MS;
 

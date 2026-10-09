@@ -221,6 +221,18 @@ QR encoder. Change `DEFAULT_URL` or pass `--url`, run it, rebuild. It is version
 The table is drawn at 4 pixels per module with the quiet zone a scanner needs. KEY held for 3 s opens the screen in every mode except Diag (which has
 an ABOUT menu item) and the update mode.
 
+## Screens
+
+* **Boot animation:** 3 s, always plays in full (skipped only when a burst of CAN traffic woke the dongle from sleep). `SPLASH_BRAND` and
+  `SPLASH_PRODUCT` at the top of the animation code in `display.c` hold the names.
+* **Pairing Mode:** `ble_access.c` starts it after the animation in Simos, SavvyCAN and ELM327 mode on a real bus, with the details from
+  `display_set_pairing_info`. It ends when something connects, when the minute is over, or on any button press. After a CAN wake it hides itself after
+  8 s unless the bus is busy, so a parked car's bursts do not light the screen for a minute. In SavvyCAN mode a USB cable counts as a connected
+  client, so on the desk the screen ends almost at once.
+* **Menu prompts** (BOOT hold): big centered text from the small font at 2 to 4 times size, split onto two lines when that makes it bigger.
+* **About:** the QR code is drawn inverted (bright modules on the black screen, `ABOUT_QR_INVERTED` in `display.c`). Phone cameras read that, a few
+  old scanner apps do not; set it to 0 for the dark-on-light card.
+
 ## Bluetooth access window
 
 `ble_access.c` stops BLE advertising after `BLE_ACCESS_WINDOW_MS` (60 s) without a connection and starts it again on a BOOT or KEY press (`ble_access_poke`).

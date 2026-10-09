@@ -185,7 +185,15 @@ void elm_mode_start(bool bench)
     diag_can_start(bench);
     stackwatch_create(elm_task, "elm", 8192, NULL, 2);
     elm_ble_start(on_ble_rx, on_link);
-    if (!bench) ble_access_start(elm_ble_connected, elm_adv_on, elm_adv_off, NULL);
+    if (!bench) {
+        char ble[24], ssid[24], pass[24], addr[24];
+        snprintf(ble, sizeof(ble), "BLE: %s", ELM_BLE_NAME);
+        snprintf(ssid, sizeof(ssid), "Wi-Fi: %s", elm_wifi_ssid());
+        snprintf(pass, sizeof(pass), "Pass: %s", elm_wifi_password());
+        snprintf(addr, sizeof(addr), "%s:%d", ELM_WIFI_IP, ELM_WIFI_PORT);
+        display_set_pairing_info(ble, ssid, pass, addr);
+        ble_access_start(clients_connected, elm_adv_on, elm_adv_off, NULL);
+    }
     elm_wifi_start(on_wifi_rx, on_link);
     ESP_LOGI(ELM_TAG, "ELM327 emulation running (BLE '%s', Wi-Fi %s:%d)", ELM_BLE_NAME, ELM_WIFI_IP, ELM_WIFI_PORT);
 }

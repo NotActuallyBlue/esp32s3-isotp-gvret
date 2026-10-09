@@ -36,9 +36,15 @@ void display_set_bench(bool bench);          // label Simos statuses as the benc
 
 // Portrait UI API
 void display_set_mode_view(const char *mode_title, const char *status_str, uint16_t state_color);
+// Pairing Mode screen: shown right after the boot animation in the modes that connect to a phone or laptop, with a countdown for the minute
+// the connection window stays open. The info lines (names, password) are shown under the timer.
+void display_set_pairing_info(const char *line1, const char *line2, const char *line3, const char *line4);
+void display_pairing_begin(int seconds);
+void display_pairing_end(void);
+bool display_pairing_active(void);
+bool display_splash_active(void);              // the boot animation is still playing
 void display_show_about(bool show);             // About screen with the QR code; other screens do not draw while it is up
 bool display_about_active(void);
-void display_skip_splash(void);                // end the boot animation (a button was pressed)
 void display_update_traffic(uint32_t rx_count, uint32_t tx_count);
 
 // Debug panel inputs (cheap, safe to call from any task)

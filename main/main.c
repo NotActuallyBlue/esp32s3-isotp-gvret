@@ -36,6 +36,7 @@
 #include "driver/twai.h"
 #include "stackwatch.h"
 #include "ble_access.h"
+#include "elm_transport.h"
 
 SemaphoreHandle_t sync_task_sem = NULL;
 
@@ -138,6 +139,9 @@ void app_main(void)
         ESP_LOGI(MAIN_TAG, "Simos BLE services running.");
         if (!bench) {
             power_mgr_start(ble_busy);
+            char gap[24];
+            ble_get_gap_name(gap);
+            display_set_pairing_info("Bluetooth name", gap, "", "");
             ble_access_start(ble_busy, ble_start_advertising, ble_stop_advertising, simos_access_changed);
         }
     } 
@@ -167,7 +171,15 @@ void app_main(void)
             twai_start_raw();
         }
         gvret_start(bench);
-        if (!bench) power_mgr_start(gvret_client_connected);
+        if (!bench) {
+            power_mgr_start(gvret_client_connected);
+            char ssid[24], pass[24], addr[24];
+            snprintf(ssid, sizeof(ssid), "Wi-Fi: %s", elm_wifi_ssid());
+            snprintf(pass, sizeof(pass), "Pass: %s", elm_wifi_password());
+            snprintf(addr, sizeof(addr), "%s:%d", ELM_WIFI_IP, elm_wifi_port());
+            display_set_pairing_info(ssid, pass, addr, "");
+            ble_access_start(gvret_client_connected, NULL, NULL, NULL);       // no Bluetooth here: the screen just shows the Wi-Fi details for a minute
+        }
 
         ESP_LOGI(MAIN_TAG, "SavvyCAN GVRET services running.");
     }

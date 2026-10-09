@@ -62,6 +62,13 @@ static bool bench_mode = false;
 static volatile bool prompt_hold = false;
 static volatile bool about_active = false;      // the About screen is up
 static volatile bool about_draw   = false;      // ...and still has to be drawn
+static void display_wake(void);
+static volatile bool pairing_active = false;    // the Pairing Mode screen is up
+static volatile bool pairing_full   = false;    // ...and has to be drawn from scratch
+static volatile int64_t pairing_deadline_us;
+static volatile int  pairing_total_s = 60;
+static char          pairing_info[4][24];
+static int           pairing_drawn_s = -1;
 static volatile bool header_dirty = false;      // only the title or status line changed: redraw just those, not the whole screen   // the button menu is on screen: nothing else may redraw until the dongle restarts
 
 // Everything is drawn by display_task. Other tasks only set the state below, so no two tasks ever
@@ -615,6 +622,7 @@ static void display_draw_header(const display_view_t *v)
     display_fill_rect(0, 0, LCD_H_RES, HEADER_H, v->color);
     int title_scale = (text_width(v->title, 2) + 1 <= LCD_H_RES - 8) ? 2 : 1;
     display_draw_text_ex(0, (HEADER_H - text_height(title_scale)) / 2, LCD_H_RES, v->title, COLOR_BLACK, v->color, title_scale, true, true);
+    if (v->prompt) return;                  // the menu screens show the big text instead of a status line
 
     int status_scale = (text_width(v->status, 2) <= LCD_H_RES - 8) ? 2 : 1;
     display_draw_text(0, STATUS_Y + (status_scale == 2 ? 0 : 2), LCD_H_RES, v->status, v->color, COLOR_BLACK, status_scale, true);
@@ -631,11 +639,74 @@ static void display_draw_page_indicator(const display_view_t *v)
     display_push(0, LCD_V_RES - 10, LCD_H_RES, 6);
 }
 
+// Text made of the small font blown up to a whole number of pixels per dot, centered across the screen. Used for the mode names on the
+// menu screens, where it has to be read from across the car.
+static int clamp_scale(int v) { return v < 1 ? 1 : (v > 4 ? 4 : v); }
+
+static int big_scale_for(size_t len)
+{
+    int scale = (int)(LCD_H_RES - 10) / (8 * (len ? (int)len : 1));
+    return clamp_scale(scale);
+}
+
+static void display_draw_big_text(int y, const char *str, uint16_t color, int scale)
+{
+    int len = (int)strlen(str);
+    int total_h = FONT_SMALL_H * scale;
+    int x0 = (LCD_H_RES - len * 8 * scale) / 2;
+    if (x0 < 0) x0 = 0;
+    for (int band = 0; band < total_h; band += STRIP_ROWS) {
+        int rows = total_h - band < STRIP_ROWS ? total_h - band : STRIP_ROWS;
+        strip_begin(LCD_H_RES, rows, COLOR_BLACK);
+        for (int r = 0; r < rows; r++) {
+            int gy = (band + r) / scale;
+            for (int ci = 0; ci < len; ci++) {
+                char c = str[ci];
+                if (c < 32 || c > 126) c = ' ';
+                const uint8_t *g = &font_small[c - 32][gy * FONT_SMALL_W];
+                for (int gx = 0; gx < FONT_SMALL_W; gx++) {
+                    if (g[gx]) strip_fill(x0 + (ci * 8 + gx) * scale, r, scale, 1, color);
+                }
+            }
+        }
+        display_push(0, y + band, LCD_H_RES, rows);
+    }
+}
+
+// One or two lines of big text in the middle of the area below the header. A name with a space is split onto two lines when that
+// lets it be bigger.
+static void display_draw_big_centered(const char *text, uint16_t color)
+{
+    char first[24], second[24] = "";
+    strlcpy(first, text, sizeof(first));
+    int scale = big_scale_for(strlen(first));
+    char *space = strchr(first, ' ');
+    char *can = strstr(first, "CAN");                       // SAVVYCAN reads better as SAVVY / CAN than as one small line
+    if (!space && can && can != first && scale < 3) {
+        memmove(can + 1, can, strlen(can) + 1);             // make room for the break
+        *can = ' ';
+        space = can;
+    }
+    if (space && scale < 3) {
+        strlcpy(second, space + 1, sizeof(second));
+        *space = 0;
+        size_t longest = strlen(first) > strlen(second) ? strlen(first) : strlen(second);
+        scale = big_scale_for(longest);
+    }
+    int lines = second[0] ? 2 : 1;
+    int gap = 8;
+    int block = lines * FONT_SMALL_H * scale + (lines - 1) * gap;
+    int y = HEADER_H + (LCD_V_RES - HEADER_H - block) / 2;
+    display_draw_big_text(y, first, color, scale);
+    if (second[0]) display_draw_big_text(y + FONT_SMALL_H * scale + gap, second, color, scale);
+}
+
 // Everything, from a blank screen. Only used when the kind of screen changes (menu prompt, About, boot animation).
 static void display_draw_view(const display_view_t *v)
 {
     display_clear(COLOR_BLACK);
     display_draw_header(v);
+    if (v->prompt) display_draw_big_centered(v->status, v->color);
 
     // Force every row to redraw
     memset(row_key, 0, sizeof(row_key));
@@ -719,11 +790,11 @@ static void display_update_info(const display_view_t *v, uint32_t notify_rate)
 }
 
 // ---------------------------------------------------------------------------------------------
-// Boot animation (4.5 s), drawn by the display task while the rest of the dongle starts up. A button press skips it.
+// Boot animation (3 s), drawn by the display task while the rest of the dongle starts up. It always plays in full.
 // ---------------------------------------------------------------------------------------------
 #define SPLASH_BRAND    "GHOSTWERKS"
 #define SPLASH_PRODUCT  "PhantomCAN"
-#define SPLASH_MS       4500
+#define SPLASH_MS       3000
 
 static volatile bool    splash_active = false;
 static int64_t          splash_start_us;
@@ -736,22 +807,11 @@ static uint16_t mix_color(int r1, int g1, int b1, int r2, int g2, int b2, int f)
 
 static int clamp_int(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
-static void display_wake(void);
-
-void display_skip_splash(void)
-{
-    splash_active = false;
-    taskENTER_CRITICAL(&state_lock);
-        view_dirty = true;
-    taskEXIT_CRITICAL(&state_lock);
-    display_wake();
-}
-
-//   0.0 - 0.6 s  a line sweeps out from the middle
-//   0.4 - 1.8 s  the brand appears letter by letter, the newest letter ghosted
-//   1.8 - 2.9 s  a highlight runs across the brand
-//   2.2 - 3.4 s  the product name types in (the CAN part in hot pink)
-//   3.2 - 4.0 s  an underline grows, then pulses until the end
+//   0.0 - 0.4 s  a line sweeps out from the middle
+//   0.3 - 1.2 s  the brand appears letter by letter, the newest letter ghosted
+//   1.2 - 1.9 s  a highlight runs across the brand
+//   1.5 - 2.3 s  the product name types in (the CAN part in hot pink)
+//   2.1 - 2.7 s  an underline grows, then shifts color until the end
 static void splash_frame(int t)
 {
     const int brand_len = (int)strlen(SPLASH_BRAND), product_len = (int)strlen(SPLASH_PRODUCT);
@@ -761,13 +821,13 @@ static void splash_frame(int t)
     const int can_from = can_at ? (int)(can_at - SPLASH_PRODUCT) : product_len;
     const uint16_t cream = rgb(245, 230, 220);
 
-    int top_w = clamp_int(t * 150 / 600, 0, 150);
+    int top_w = clamp_int(t * 150 / 400, 0, 150);
     if (top_w > 0) display_fill_rect((LCD_H_RES - top_w) / 2, top_y, top_w, 2, COLOR_ROSE);
 
-    int shown = clamp_int((t - 400) / 140, 0, brand_len);
+    int shown = clamp_int((t - 300) / 90, 0, brand_len);
     if (shown > 0) {
         strip_begin(LCD_H_RES, FONT_LARGE_H, COLOR_BLACK);
-        int highlight = (t >= 1800) ? (t - 1800) / 100 : -10;
+        int highlight = (t >= 1200) ? (t - 1200) / 65 : -10;
         for (int i = 0; i < shown; i++) {
             char c[2] = { SPLASH_BRAND[i], 0 };
             if (i == shown - 1 && shown < brand_len) {
@@ -785,7 +845,7 @@ static void splash_frame(int t)
         display_push(0, brand_y, LCD_H_RES, FONT_LARGE_H);
     }
 
-    int typed = clamp_int((t - 2200) / 120, 0, product_len);
+    int typed = clamp_int((t - 1500) / 80, 0, product_len);
     if (typed > 0) {
         strip_begin(LCD_H_RES, FONT_LARGE_H, COLOR_BLACK);
         for (int i = 0; i < typed; i++) {
@@ -797,15 +857,17 @@ static void splash_frame(int t)
         display_push(0, product_y, LCD_H_RES, FONT_LARGE_H);
     }
 
-    int under_w = clamp_int((t - 3200) * 160 / 800, 0, 160);
+    int under_w = clamp_int((t - 2100) * 160 / 600, 0, 160);
     if (under_w > 0) {
         // after it has grown, the line slowly shifts between mango and pink
-        int pulse = t > 4000 ? clamp_int((t - 4000) * 255 / 500, 0, 255) : 0;
+        int pulse = t > 2700 ? clamp_int((t - 2700) * 255 / 300, 0, 255) : 0;
         display_fill_rect((LCD_H_RES - under_w) / 2, under_y, under_w, 2, mix_color(238, 122, 30, 232, 55, 122, pulse));
     }
 }
 
 // ---------------------------------------------------------------------------------------------
+#define ABOUT_QR_INVERTED 1
+
 // About screen: a QR code for the project page, the product name and the firmware build
 // ---------------------------------------------------------------------------------------------
 static void display_draw_about(void)
@@ -818,9 +880,14 @@ static void display_draw_about(void)
     display_fill_rect(0, 0, LCD_H_RES, HEADER_H, COLOR_ACCENT);
     display_draw_text_ex(0, (HEADER_H - text_height(2)) / 2, LCD_H_RES, "ABOUT", COLOR_BLACK, COLOR_ACCENT, 2, true, true);
 
-    // Deep crimson modules on a warm cream card: still far darker than the background, which is what scanners need, and it matches the theme
+    // Bright modules straight on the black screen, no white card. This is the inverted form of a QR code: phone cameras (iPhone, Google
+    // Lens) and most scanner apps read it, but a few older scanner apps only read dark-on-light codes. Set ABOUT_QR_INVERTED to 0 for those.
+#if ABOUT_QR_INVERTED
+    const uint16_t qr_light = COLOR_BLACK, qr_dark = COLOR_ACCENT;
+#else
     const uint16_t qr_light = rgb(250, 234, 226), qr_dark = rgb(115, 10, 40);
     display_fill_rect(card_x, card_y, card, card, qr_light);
+#endif
     for (int row = 0; row < ABOUT_QR_SIZE; row++) {
         strip_begin(ABOUT_QR_SIZE * scale, scale, qr_light);
         for (int col = 0; col < ABOUT_QR_SIZE; col++) {
@@ -855,6 +922,80 @@ bool display_about_active(void)
     return about_active;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Pairing Mode screen
+// ---------------------------------------------------------------------------------------------
+#define PAIR_TITLE_Y    46
+#define PAIR_TIMER_Y    116
+#define PAIR_BAR_Y      184
+#define PAIR_INFO_Y     210
+
+static void display_draw_pairing_static(const display_view_t *v)
+{
+    display_clear(COLOR_BLACK);
+    display_fill_rect(0, 0, LCD_H_RES, HEADER_H, v->color);
+    int title_scale = (text_width(v->title, 2) + 1 <= LCD_H_RES - 8) ? 2 : 1;
+    display_draw_text_ex(0, (HEADER_H - text_height(title_scale)) / 2, LCD_H_RES, v->title, COLOR_BLACK, v->color, title_scale, true, true);
+    display_draw_big_text(PAIR_TITLE_Y, "PAIRING", COLOR_ACCENT, 2);
+    display_draw_big_text(PAIR_TITLE_Y + 32, "MODE", COLOR_ACCENT, 2);
+    for (int i = 0; i < 4; i++) {
+        if (pairing_info[i][0]) display_draw_text(0, PAIR_INFO_Y + i * 16, LCD_H_RES, pairing_info[i], i == 0 ? C_LABEL : C_VALUE, COLOR_BLACK, 1, true);
+    }
+    display_draw_text(0, 296, LCD_H_RES, "any button: hide", C_LABEL, COLOR_BLACK, 1, true);
+}
+
+static void display_update_pairing(int left_s)
+{
+    char text[16];
+    if (left_s > 599) left_s = 599;
+    snprintf(text, sizeof(text), "%d:%02d", left_s / 60, left_s % 60);
+    display_draw_big_text(PAIR_TIMER_Y, text, left_s <= 10 ? COLOR_ORANGE : rgb(250, 234, 226), 4);
+
+    int total = pairing_total_s > 0 ? pairing_total_s : 60;
+    int full = 150;
+    int filled = left_s >= total ? full : full * left_s / total;
+    display_fill_rect((LCD_H_RES - full) / 2, PAIR_BAR_Y, full, 8, C_LINE);
+    if (filled > 0) display_fill_rect((LCD_H_RES - full) / 2, PAIR_BAR_Y, filled, 8, left_s <= 10 ? COLOR_ORANGE : COLOR_ACCENT);
+}
+
+void display_set_pairing_info(const char *line1, const char *line2, const char *line3, const char *line4)
+{
+    const char *lines[4] = { line1, line2, line3, line4 };
+    for (int i = 0; i < 4; i++) strlcpy(pairing_info[i], lines[i] ? lines[i] : "", sizeof(pairing_info[i]));
+}
+
+void display_pairing_begin(int seconds)
+{
+    taskENTER_CRITICAL(&state_lock);
+        pairing_total_s = seconds;
+        pairing_deadline_us = esp_timer_get_time() + (int64_t)seconds * 1000000;
+        pairing_active = true;
+        pairing_full = true;
+    taskEXIT_CRITICAL(&state_lock);
+    display_wake();
+}
+
+void display_pairing_end(void)
+{
+    taskENTER_CRITICAL(&state_lock);
+        if (pairing_active) {
+            pairing_active = false;
+            view_dirty = true;              // the normal screen comes back
+        }
+    taskEXIT_CRITICAL(&state_lock);
+    display_wake();
+}
+
+bool display_pairing_active(void)
+{
+    return pairing_active;
+}
+
+bool display_splash_active(void)
+{
+    return splash_active;
+}
+
 static void display_task(void *pvParameters)
 {
     uint32_t last_rx = 0, last_tx = 0;
@@ -884,6 +1025,31 @@ static void display_task(void *pvParameters)
             display_bump_timer();           // the screen stays on while About is up
             ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(250));
             continue;
+        }
+
+        if (pairing_active && !prompt_hold) {
+            int64_t left_us = pairing_deadline_us - esp_timer_get_time();
+            if (left_us <= 0) {
+                display_pairing_end();
+            } else {
+                if (pairing_full) {
+                    pairing_full = false;
+                    display_view_t v;
+                    taskENTER_CRITICAL(&state_lock);
+                        v = view;
+                    taskEXIT_CRITICAL(&state_lock);
+                    display_draw_pairing_static(&v);
+                    pairing_drawn_s = -1;
+                }
+                int left_s = (int)((left_us + 999999) / 1000000);
+                if (left_s != pairing_drawn_s) {
+                    pairing_drawn_s = left_s;
+                    display_update_pairing(left_s);
+                }
+                display_bump_timer();           // the screen stays on during pairing
+                ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
+                continue;
+            }
         }
 
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(250));
@@ -940,7 +1106,8 @@ void display_update_traffic(uint32_t rx_count, uint32_t tx_count)
 
 void display_set_mode_view(const char *mode_title, const char *status_str, uint16_t state_color)
 {
-    if (prompt_hold || about_active) return;       // the running mode refreshes its status every few hundred ms; do not overwrite the menu
+    if (prompt_hold) return;       // the button menu owns the screen
+    bool quiet = about_active || pairing_active;        // remembered for when the normal screen comes back, but not drawn now
     taskENTER_CRITICAL(&state_lock);
         // Repaint only when something shown actually changed, so a caller may set the same status repeatedly
         bool changed = strncmp(view.title, mode_title, sizeof(view.title) - 1) != 0 ||
@@ -951,7 +1118,8 @@ void display_set_mode_view(const char *mode_title, const char *status_str, uint1
         bool was_prompt = view.prompt;
         view.color = state_color;
         view.prompt = false;
-        if (was_prompt) view_dirty = true;          // coming back from the menu prompt: draw the whole screen
+        if (quiet) { /* nothing to draw right now */ }
+        else if (was_prompt) view_dirty = true;     // coming back from the menu prompt: draw the whole screen
         else if (changed) header_dirty = true;      // otherwise only the title bar and status line need redrawing
     taskEXIT_CRITICAL(&state_lock);
     display_wake();

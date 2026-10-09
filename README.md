@@ -57,6 +57,12 @@ release when you see the mode you want.
 | about 8 to 9.5 seconds | **Wi-Fi update** | firmware update mode |
 | 9.5 seconds or more | **Cancel** | restarts in the same mode |
 
+**Pairing Mode.** After the 3-second start-up animation, Simos, SavvyCAN and ELM327 mode show a **PAIRING MODE** screen with a one-minute
+countdown, the Bluetooth name and, where it applies, the Wi-Fi name, password and address. Connect your app while it counts down. It goes away
+as soon as something connects, when the minute is up, or when you press any button. In Simos and ELM327 mode Bluetooth stops accepting new
+connections when the minute ends (the screen says **LOCKED**); tap **BOOT** to open it, and the Pairing Mode screen, for another minute.
+SavvyCAN uses Wi-Fi only, so its screen is a reminder of the network details and nothing locks. Diag mode goes straight to its menu.
+
 **About screen.** Hold **KEY** for 3 seconds (in Diag mode, choose **ABOUT** in the menu) to show a QR code that opens this project's page on
 GitHub, along with the product name and firmware build. Any button closes it.
 
