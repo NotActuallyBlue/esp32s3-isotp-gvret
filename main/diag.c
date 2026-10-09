@@ -855,10 +855,10 @@ static void selftest(void)
     ESP_LOGW(DIAG_TAG, "SELFTEST info");
     vehicle_info();
 
-    ESP_LOGW(DIAG_TAG, "SELFTEST about (2 s)");
+    ESP_LOGW(DIAG_TAG, "SELFTEST about (8 s, longer than the 5 s screen timeout)");
     display_show_about(true);
-    vTaskDelay(pdMS_TO_TICKS(2000));
-    ESP_LOGW(DIAG_TAG, "SELFTEST about active: %d", display_about_active());
+    vTaskDelay(pdMS_TO_TICKS(8000));
+    ESP_LOGW(DIAG_TAG, "SELFTEST about active: %d, screen still on: %d", display_about_active(), display_is_awake());
     display_show_about(false);
     vTaskDelay(pdMS_TO_TICKS(500));
     ESP_LOGW(DIAG_TAG, "SELFTEST about closed: %d", !display_about_active());

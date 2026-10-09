@@ -60,7 +60,8 @@ static bool display_is_on = true;
 static bool bench_mode = false;
 static volatile bool prompt_hold = false;
 static volatile bool about_active = false;      // the About screen is up
-static volatile bool about_draw   = false;      // ...and still has to be drawn   // the button menu is on screen: nothing else may redraw until the dongle restarts
+static volatile bool about_draw   = false;      // ...and still has to be drawn
+static volatile bool header_dirty = false;      // only the title or status line changed: redraw just those, not the whole screen   // the button menu is on screen: nothing else may redraw until the dongle restarts
 
 // Everything is drawn by display_task. Other tasks only set the state below, so no two tasks ever
 // draw at once and the pixel strip is never overwritten while a transfer is still using it.
@@ -602,18 +603,33 @@ static bool display_shows_counters(const display_view_t *v)
     return !v->prompt && detail_count == 0 && page == 0;
 }
 
-static void display_draw_view(const display_view_t *v)
+// Header bar with the mode name, and the status line under it
+static void display_draw_header(const display_view_t *v)
 {
-    display_clear(COLOR_BLACK);
-
-    // Header bar: mode name on the state color
     display_fill_rect(0, 0, LCD_H_RES, HEADER_H, v->color);
     int title_scale = (text_width(v->title, 2) + 1 <= LCD_H_RES - 8) ? 2 : 1;
     display_draw_text_ex(0, (HEADER_H - text_height(title_scale)) / 2, LCD_H_RES, v->title, COLOR_BLACK, v->color, title_scale, true, true);
 
-    // Status line in the state color
     int status_scale = (text_width(v->status, 2) <= LCD_H_RES - 8) ? 2 : 1;
     display_draw_text(0, STATUS_Y + (status_scale == 2 ? 0 : 2), LCD_H_RES, v->status, v->color, COLOR_BLACK, status_scale, true);
+}
+
+// One square per page, the current one in the state color
+static void display_draw_page_indicator(const display_view_t *v)
+{
+    strip_begin(LCD_H_RES, 6, COLOR_BLACK);
+    int x0 = (LCD_H_RES - (PAGE_COUNT * 6 + (PAGE_COUNT - 1) * 6)) / 2;
+    for (int i = 0; i < PAGE_COUNT; i++) {
+        strip_fill(x0 + i * 12, 0, 6, 6, i == page ? v->color : C_LINE);
+    }
+    display_push(0, LCD_V_RES - 10, LCD_H_RES, 6);
+}
+
+// Everything, from a blank screen. Only used when the kind of screen changes (menu prompt, About, boot animation).
+static void display_draw_view(const display_view_t *v)
+{
+    display_clear(COLOR_BLACK);
+    display_draw_header(v);
 
     // Force every row to redraw
     memset(row_key, 0, sizeof(row_key));
@@ -626,20 +642,12 @@ static void display_draw_view(const display_view_t *v)
     if (display_shows_counters(v)) {
         display_fill_rect(10, BOTTOM_DIVIDER_Y, LCD_H_RES - 20, 1, C_LINE);
     }
-
-    // Page indicator: one square per page, the current one in the state color
-    if (detail_count == 0) {
-        strip_begin(LCD_H_RES, 6, COLOR_BLACK);
-        int x0 = (LCD_H_RES - (PAGE_COUNT * 6 + (PAGE_COUNT - 1) * 6)) / 2;
-        for (int i = 0; i < PAGE_COUNT; i++) {
-            strip_fill(x0 + i * 12, 0, 6, 6, i == page ? v->color : C_LINE);
-        }
-        display_push(0, LCD_V_RES - 10, LCD_H_RES, 6);
-    }
+    if (detail_count == 0) display_draw_page_indicator(v);
 }
 
-// Redraw only the rows whose text or color changed. If the rows moved (a page with a different number of section
-// headers has different spacing), the whole row area is wiped and redrawn so no old line is left behind.
+// Redraw only the rows whose text or color changed. When the rows moved or the page changed, every row is drawn over the old one in
+// place (each row is a full-width strip with its own black background) and only the gaps and the unused tail are cleared, so the
+// screen never goes blank in between.
 static void display_update_info(const display_view_t *v, uint32_t notify_rate)
 {
     if (v->prompt) return;
@@ -649,9 +657,11 @@ static void display_update_info(const display_view_t *v, uint32_t notify_rate)
 
     static int prev_y[MAX_ROWS];
     static int prev_n = -1;
+    static int prev_page = -1;
     int ys[MAX_ROWS];
     int y = ROWS_Y;
-    bool moved = n != prev_n;
+    bool moved = n != prev_n || page != prev_page;
+    prev_page = page;
     for (int i = 0; i < n; i++) {
         if (rows[i].kind == ROW_SECTION && i > 0) y += SECTION_GAP;
         ys[i] = y;
@@ -659,11 +669,12 @@ static void display_update_info(const display_view_t *v, uint32_t notify_rate)
         if (ys[i] + FONT_SMALL_H > LCD_V_RES) { n = i; break; }
         y += ROW_PITCH;
     }
+    // Leave the page indicator (bottom 10 px) alone on the pages that have one
+    int bottom = display_shows_counters(v) ? BOTTOM_DIVIDER_Y : (detail_count == 0 ? LCD_V_RES - 12 : LCD_V_RES - 4);
     if (moved) {
-        // Leave the page indicator (bottom 10 px) alone on the pages that have one
-        int bottom = display_shows_counters(v) ? BOTTOM_DIVIDER_Y : (detail_count == 0 ? LCD_V_RES - 12 : LCD_V_RES - 4);
-        display_fill_rect(0, ROWS_Y, LCD_H_RES, bottom - ROWS_Y, COLOR_BLACK);
         memset(row_key, 0, sizeof(row_key));
+        memset(rx_key, 0, sizeof(rx_key));
+        memset(tx_key, 0, sizeof(tx_key));
         memcpy(prev_y, ys, sizeof(int) * n);
         prev_n = n;
     }
@@ -672,9 +683,17 @@ static void display_update_info(const display_view_t *v, uint32_t notify_rate)
         char key[64];
         snprintf(key, sizeof(key), "%d|%s|%s|%04X", rows[i].kind, rows[i].label, rows[i].value, rows[i].color);
         if (strcmp(key, row_key[i]) != 0) {
+            if (moved && rows[i].kind == ROW_SECTION && i > 0) display_fill_rect(0, ys[i] - SECTION_GAP, LCD_H_RES, SECTION_GAP, COLOR_BLACK);
             draw_row(&rows[i], ys[i]);
             strlcpy(row_key[i], key, sizeof(row_key[i]));
         }
+    }
+
+    if (moved) {
+        int tail = n > 0 ? ys[n - 1] + ROW_PITCH : ROWS_Y;
+        if (bottom > tail) display_fill_rect(0, tail, LCD_H_RES, bottom - tail, COLOR_BLACK);
+        if (display_shows_counters(v)) display_fill_rect(10, BOTTOM_DIVIDER_Y, LCD_H_RES - 20, 1, C_LINE);
+        if (detail_count == 0) display_draw_page_indicator(v);
     }
 
     if (!display_shows_counters(v)) return;
@@ -855,19 +874,20 @@ static void display_task(void *pvParameters)
                 about_draw = false;
                 display_draw_about();
             }
+            display_bump_timer();           // the screen stays on while About is up
             ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(250));
             continue;
         }
 
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(250));
 
-        bool dirty;
+        bool dirty, header;
         taskENTER_CRITICAL(&state_lock);
             dirty = view_dirty;
-            if (dirty) {
-                current = view;
-                view_dirty = false;
-            }
+            header = header_dirty;
+            if (dirty || header) current = view;
+            view_dirty = false;
+            header_dirty = false;
         taskEXIT_CRITICAL(&state_lock);
 
         int64_t now = esp_timer_get_time();
@@ -883,8 +903,16 @@ static void display_task(void *pvParameters)
         last_rx = cur_rx;
         last_tx = cur_tx;
 
-        if (dirty || traffic) display_bump_timer();
-        if (dirty) display_draw_view(&current);
+        static int last_page = 0;
+        bool page_changed = page != last_page;
+        last_page = page;
+        if (dirty || header || traffic || page_changed) display_bump_timer();
+        if (dirty) {
+            display_draw_view(&current);
+        } else if (header) {
+            display_draw_header(&current);
+            if (!current.prompt && detail_count == 0) display_draw_page_indicator(&current);   // its current square uses the state color
+        }
         display_update_info(&current, notify_rate);
     }
 }
@@ -913,9 +941,11 @@ void display_set_mode_view(const char *mode_title, const char *status_str, uint1
                        view.color != state_color || view.prompt;
         strlcpy(view.title, mode_title, sizeof(view.title));
         strlcpy(view.status, status_str, sizeof(view.status));
+        bool was_prompt = view.prompt;
         view.color = state_color;
         view.prompt = false;
-        if (changed) view_dirty = true;
+        if (was_prompt) view_dirty = true;          // coming back from the menu prompt: draw the whole screen
+        else if (changed) header_dirty = true;      // otherwise only the title bar and status line need redrawing
     taskEXIT_CRITICAL(&state_lock);
     display_wake();
 }
@@ -965,10 +995,7 @@ void display_set_prompt(const char *title, const char *status, uint16_t color)
 
 void display_next_page(void)
 {
-    page = (page + 1) % PAGE_COUNT;
-    taskENTER_CRITICAL(&state_lock);
-        view_dirty = true;
-    taskEXIT_CRITICAL(&state_lock);
+    page = (page + 1) % PAGE_COUNT;         // the display task notices the new page and redraws the rows in place
     display_wake();
 }
 
@@ -981,7 +1008,6 @@ void display_set_detail(uint8_t index, const char *label, const char *value)
         details[index].color = 0;
         if (index >= detail_count) {
             detail_count = index + 1;
-            if (!prompt_hold && !about_active) view_dirty = true;      // the layout changed
         }
     taskEXIT_CRITICAL(&state_lock);
     display_wake();
@@ -996,7 +1022,6 @@ void display_set_details(const char *title, uint16_t title_color, const display_
     }
     taskENTER_CRITICAL(&state_lock);
         // Only a change in the number of rows needs the whole screen redrawn; otherwise just the rows that differ
-        if (!prompt_hold && !about_active && (count != detail_count || strcmp(title, details_title) != 0)) view_dirty = true;
         strlcpy(details_title, title, sizeof(details_title));
         details_color = title_color;
         for (int i = 0; i < count; i++) {
