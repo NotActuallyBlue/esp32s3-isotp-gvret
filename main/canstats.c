@@ -1,6 +1,7 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_timer.h"
 #include "canstats.h"
 
 #define TRACKED_IDS     16
@@ -14,11 +15,19 @@ static portMUX_TYPE         stats_lock = portMUX_INITIALIZER_UNLOCKED;
 static canstats_totals_t    totals;
 static uint32_t             seen_bitmap[2048 / 32];
 static tracked_id_t         tracked[TRACKED_IDS];
+static volatile int64_t     last_frame_us;
+
+uint32_t canstats_ms_since_frame(void)
+{
+    int64_t last = last_frame_us;
+    return last ? (uint32_t)((esp_timer_get_time() - last) / 1000) : UINT32_MAX;
+}
 
 void canstats_on_frame(uint32_t id, uint8_t dlc)
 {
     uint32_t std_id = id & 0x7FF;
     uint8_t len = dlc > 8 ? 8 : dlc;
+    last_frame_us = esp_timer_get_time();
 
     taskENTER_CRITICAL(&stats_lock);
         totals.frames++;

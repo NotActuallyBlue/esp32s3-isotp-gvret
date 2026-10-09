@@ -441,6 +441,8 @@ void persist_task(void *arg)
 			xSemaphoreTake(pPersist->send_sema, pdMS_TO_TICKS(TIMEOUT_NORMAL));
 			uint32_t current_delay = 1;
 			uint32_t required_delay = persist_get_delay() + (ble_queue_waiting() * persist_get_q_delay());
+			// With nobody answering, one request a second is enough to notice the car coming back (and to wake a sleeping bus)
+			if (bridge_bus_quiet() && required_delay < 1000) required_delay = 1000;
 			uint32_t current_time = (esp_timer_get_time() / 1000UL) & 0xFFFFFFFF;
 			if(persist_send(pPersist)) {
 				tMUTEX(pPersist->data_mutex);

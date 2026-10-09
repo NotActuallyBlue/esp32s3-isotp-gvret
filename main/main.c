@@ -192,8 +192,8 @@ void app_main(void)
                 bus_quiet_logs = 0;
                 bus_was_alive = alive;
                 bus_last_lost = lost;
-                ESP_LOGI(MAIN_TAG, "Bus: %s, %lu frame(s) in the last 10 s, %lu unique id(s), %lu lost, CAN %s (TEC %lu, REC %lu)",
-                         alive ? "ALIVE" : "SILENT", (unsigned long)delta, (unsigned long)totals.unique_ids, (unsigned long)lost,
+                ESP_LOGI(MAIN_TAG, "Bus: %s, %lu frame(s) in the last 10 s, %lu unique id(s), %lu lost, ISO-TP errors %lu, CAN %s (TEC %lu, REC %lu)",
+                         alive ? "ALIVE" : "SILENT", (unsigned long)delta, (unsigned long)totals.unique_ids, (unsigned long)lost, (unsigned long)g_error_count,
                          !have_state ? "n/a" : st.state == TWAI_STATE_RUNNING ? "running" : st.state == TWAI_STATE_BUS_OFF ? "BUS OFF" : "other",
                          have_state ? (unsigned long)st.tx_error_counter : 0UL, have_state ? (unsigned long)st.rx_error_counter : 0UL);
             }

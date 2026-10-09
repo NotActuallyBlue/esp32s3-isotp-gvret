@@ -22,6 +22,7 @@
 #include "isotp_bridge.h"
 #include "display.h"
 #include "bench_sim.h"
+#include "canstats.h"
 #include "stackwatch.h"
 
 #define BRIDGE_TAG                  "Bridge"
@@ -124,9 +125,15 @@ typedef struct {
     uint32_t suppressed;
 } ErrorLogState;
 
+// Nobody has answered for a few seconds: the car is off or the ECU is not there. Requests then fail by themselves.
+bool bridge_bus_quiet(void)
+{
+    return !bench_sim_active() && canstats_ms_since_frame() > BUS_QUIET_MS;
+}
+
 static void log_isotp_error(ErrorLogState *state, uint16_t number, const char *direction, int16_t code)
 {
-    g_error_count++;
+    if (!bridge_bus_quiet()) g_error_count++;           // errors on a dead bus say nothing about the dongle or the link
     int64_t now = esp_timer_get_time();
     if (state->last_log_us == 0 || now - state->last_log_us >= ERROR_LOG_INTERVAL_US) {
         if (state->suppressed > 0) {

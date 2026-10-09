@@ -21,6 +21,7 @@ typedef struct {
 
 void canstats_on_frame(uint32_t id, uint8_t dlc);
 void canstats_on_tx_failure(void);
+uint32_t canstats_ms_since_frame(void);     // milliseconds since the last received frame, UINT32_MAX if none yet
 void canstats_on_event(can_event_t event);
 void canstats_get_totals(canstats_totals_t *out);
 

@@ -6,6 +6,7 @@
 #include "esp_log.h"
 #include "esp_err.h"
 #include "esp_task_wdt.h"
+#include "esp_timer.h"
 #include "isotp.h"
 #include "isotp_link_containers.h"
 #include "constants.h"
@@ -223,7 +224,18 @@ void twai_send(twai_message_t *twai_tx_msg)
     esp_err_t err = twai_transmit(twai_tx_msg, pdMS_TO_TICKS(50));
     if (err != ESP_OK) {
         canstats_on_tx_failure();
-        ESP_LOGW(TWAI_TAG, "CAN TX failed (ID: 0x%03lX): %s", (unsigned long)twai_tx_msg->identifier, esp_err_to_name(err));
+        // A bus nobody listens on fails every frame: first one right away, then one summary every 30 s
+        static int64_t last_log_us;
+        static uint32_t suppressed;
+        int64_t now = esp_timer_get_time();
+        if (last_log_us == 0 || now - last_log_us >= 30LL * 1000 * 1000) {
+            ESP_LOGW(TWAI_TAG, "CAN TX failed (ID: 0x%03lX): %s (%lu more since the last report)", (unsigned long)twai_tx_msg->identifier,
+                     esp_err_to_name(err), (unsigned long)suppressed);
+            last_log_us = now;
+            suppressed = 0;
+        } else {
+            suppressed++;
+        }
     }
 }
 

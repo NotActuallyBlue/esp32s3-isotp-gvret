@@ -207,3 +207,9 @@ that of Simos Tools and Simos.app by Tycho ([TheFlashBold](https://github.com/Th
   longer ones. Trim a stack only after a long real session shows how much it really needs.
 * Desktop BLE tests: BlueZ caches the dongle between runs and a stale entry makes `ble_probe.py` fail with "Service Discovery has not
   been performed" or skew its timing. Run `bluetoothctl remove <address>` before each run.
+
+## A quiet bus
+
+When no CAN frame has arrived for 3 s (`BUS_QUIET_MS`), the car is off or nothing answers. Persist logging then slows to one request a second, so a
+dead bus is not hammered and a waking bus is still noticed, and ISO-TP errors stop being counted (they only mean the car is gone). Full speed
+returns within a second of the first answer. The bench simulator is never "quiet". The `Bus:` log line shows the running ISO-TP error total.
