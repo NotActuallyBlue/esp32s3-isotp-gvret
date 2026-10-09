@@ -15,6 +15,7 @@
 #include "display.h"
 #include "flashlog.h"
 #include "font.h"
+#include "about_qr.h"
 #include "canstats.h"
 #include "esp_app_desc.h"
 #include "esp_ota_ops.h"
@@ -57,7 +58,9 @@ static esp_lcd_panel_handle_t panel_handle = NULL;
 static TimerHandle_t display_timer = NULL;
 static bool display_is_on = true;
 static bool bench_mode = false;
-static volatile bool prompt_hold = false;   // the button menu is on screen: nothing else may redraw until the dongle restarts
+static volatile bool prompt_hold = false;
+static volatile bool about_active = false;      // the About screen is up
+static volatile bool about_draw   = false;      // ...and still has to be drawn   // the button menu is on screen: nothing else may redraw until the dongle restarts
 
 // Everything is drawn by display_task. Other tasks only set the state below, so no two tasks ever
 // draw at once and the pixel strip is never overwritten while a transfer is still using it.
@@ -109,15 +112,15 @@ static uint16_t rgb(uint8_t r, uint8_t g, uint8_t b)
     return COLOR_RGB(r, g, b);
 }
 
-#define C_VALUE         rgb(238, 218, 210)
-#define C_LABEL         rgb(200, 115, 140)
-#define C_LINE          rgb(62, 22, 34)
-#define C_LINK          rgb(210, 100, 20)
-#define C_BUS           rgb(200, 40, 100)
-#define C_SYSTEM        rgb(210, 80, 70)
-#define C_GOOD          rgb(0, 195, 95)
-#define C_WARN          rgb(220, 170, 0)
-#define C_BAD           rgb(225, 20, 30)
+#define C_VALUE         rgb(250, 234, 226)
+#define C_LABEL         rgb(236, 142, 166)
+#define C_LINE          rgb(78, 28, 42)
+#define C_LINK          rgb(238, 122, 30)
+#define C_BUS           rgb(232, 55, 122)
+#define C_SYSTEM        rgb(238, 100, 90)
+#define C_GOOD          rgb(0, 218, 100)
+#define C_WARN          rgb(244, 190, 0)
+#define C_BAD           rgb(242, 25, 35)
 
 static bool display_on_color_trans_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t *edata, void *ctx)
 {
@@ -219,14 +222,21 @@ static void strip_text(int x, int y, const char *str, uint16_t color, int scale)
     }
 }
 
-static void display_draw_text(int x0, int y, int box_w, const char *str, uint16_t color, uint16_t bg, int scale, bool center)
+static void display_draw_text_ex(int x0, int y, int box_w, const char *str, uint16_t color, uint16_t bg, int scale, bool center, bool bold)
 {
     int h = text_height(scale);
     if (scale < 1 || h > STRIP_ROWS || box_w <= 0 || x0 + box_w > LCD_H_RES) return;
     strip_begin(box_w, h, bg);
-    int tw = text_width(str, scale);
-    strip_text(center ? (box_w - tw) / 2 : 0, 0, str, color, scale);
+    int tw = text_width(str, scale) + (bold ? 1 : 0);
+    int x = center ? (box_w - tw) / 2 : 0;
+    strip_text(x, 0, str, color, scale);
+    if (bold) strip_text(x + 1, 0, str, color, scale);          // the same text one pixel over makes the strokes heavier
     display_push(x0, y, box_w, h);
+}
+
+static void display_draw_text(int x0, int y, int box_w, const char *str, uint16_t color, uint16_t bg, int scale, bool center)
+{
+    display_draw_text_ex(x0, y, box_w, str, color, bg, scale, center, false);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -598,9 +608,8 @@ static void display_draw_view(const display_view_t *v)
 
     // Header bar: mode name on the state color
     display_fill_rect(0, 0, LCD_H_RES, HEADER_H, v->color);
-    int title_x = 8;
-    int title_scale = (text_width(v->title, 2) <= LCD_H_RES - title_x - 4) ? 2 : 1;
-    display_draw_text(title_x, (HEADER_H - text_height(title_scale)) / 2, LCD_H_RES - title_x - 4, v->title, COLOR_BLACK, v->color, title_scale, false);
+    int title_scale = (text_width(v->title, 2) + 1 <= LCD_H_RES - 8) ? 2 : 1;
+    display_draw_text_ex(0, (HEADER_H - text_height(title_scale)) / 2, LCD_H_RES, v->title, COLOR_BLACK, v->color, title_scale, true, true);
 
     // Status line in the state color
     int status_scale = (text_width(v->status, 2) <= LCD_H_RES - 8) ? 2 : 1;
@@ -737,15 +746,15 @@ static void splash_frame(int t)
         for (int i = 0; i < shown; i++) {
             char c[2] = { SPLASH_BRAND[i], 0 };
             if (i == shown - 1 && shown < brand_len) {
-                strip_text(brand_x + i * 16 - 4, 0, c, rgb(80, 18, 30), 2);
-                strip_text(brand_x + i * 16 + 4, 0, c, rgb(80, 18, 30), 2);
+                strip_text(brand_x + i * 16 - 4, 0, c, rgb(96, 22, 38), 2);
+                strip_text(brand_x + i * 16 + 4, 0, c, rgb(96, 22, 38), 2);
             }
         }
         for (int i = 0; i < shown; i++) {
             char c[2] = { SPLASH_BRAND[i], 0 };
-            uint16_t color = mix_color(210, 100, 20, 200, 40, 100, i * 255 / (brand_len - 1));
+            uint16_t color = mix_color(238, 122, 30, 232, 55, 122, i * 255 / (brand_len - 1));
             if ((i == shown - 1 && shown < brand_len) || i == highlight) color = cream;
-            else if (i == highlight - 1) color = rgb(225, 150, 165);
+            else if (i == highlight - 1) color = rgb(240, 165, 180);
             strip_text(brand_x + i * 16, 0, c, color, 2);
         }
         display_push(0, brand_y, LCD_H_RES, FONT_LARGE_H);
@@ -756,7 +765,7 @@ static void splash_frame(int t)
         strip_begin(LCD_H_RES, FONT_LARGE_H, COLOR_BLACK);
         for (int i = 0; i < typed; i++) {
             char c[2] = { SPLASH_PRODUCT[i], 0 };
-            uint16_t color = (i >= can_from) ? COLOR_ROSE : rgb(238, 218, 210);
+            uint16_t color = (i >= can_from) ? COLOR_ROSE : rgb(250, 234, 226);
             if (i == typed - 1 && typed < product_len) color = cream;
             strip_text(product_x + i * 16, 0, c, color, 2);
         }
@@ -767,8 +776,57 @@ static void splash_frame(int t)
     if (under_w > 0) {
         // after it has grown, the line slowly shifts between mango and pink
         int pulse = t > 4000 ? clamp_int((t - 4000) * 255 / 500, 0, 255) : 0;
-        display_fill_rect((LCD_H_RES - under_w) / 2, under_y, under_w, 2, mix_color(210, 100, 20, 200, 40, 100, pulse));
+        display_fill_rect((LCD_H_RES - under_w) / 2, under_y, under_w, 2, mix_color(238, 122, 30, 232, 55, 122, pulse));
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// About screen: a QR code for the project page, the product name and the firmware build
+// ---------------------------------------------------------------------------------------------
+static void display_draw_about(void)
+{
+    const int scale = 4, quiet = 4;
+    const int card = (ABOUT_QR_SIZE + 2 * quiet) * scale;          // 164 px for the 33-module code
+    const int card_x = (LCD_H_RES - card) / 2, card_y = 44;
+
+    display_clear(COLOR_BLACK);
+    display_fill_rect(0, 0, LCD_H_RES, HEADER_H, COLOR_ACCENT);
+    display_draw_text_ex(0, (HEADER_H - text_height(2)) / 2, LCD_H_RES, "ABOUT", COLOR_BLACK, COLOR_ACCENT, 2, true, true);
+
+    // dark modules on a white card with the quiet zone a scanner needs
+    display_fill_rect(card_x, card_y, card, card, COLOR_WHITE);
+    for (int row = 0; row < ABOUT_QR_SIZE; row++) {
+        strip_begin(ABOUT_QR_SIZE * scale, scale, COLOR_WHITE);
+        for (int col = 0; col < ABOUT_QR_SIZE; col++) {
+            if (about_qr_rows[row][col / 8] & (0x80 >> (col % 8))) strip_fill(col * scale, 0, scale, scale, COLOR_BLACK);
+        }
+        display_push(card_x + quiet * scale, card_y + (quiet + row) * scale, ABOUT_QR_SIZE * scale, scale);
+    }
+
+    char build[32];
+    const esp_app_desc_t *app = esp_app_get_description();
+    snprintf(build, sizeof(build), "firmware %s", app->date);
+    display_draw_text_ex(0, 216, LCD_H_RES, SPLASH_PRODUCT, COLOR_ROSE, COLOR_BLACK, 2, true, true);
+    display_draw_text(0, 236, LCD_H_RES, "by Ghostwerks", C_LABEL, COLOR_BLACK, 1, true);
+    display_draw_text(0, 252, LCD_H_RES, "Scan for the README", C_VALUE, COLOR_BLACK, 1, true);
+    display_draw_text(0, 268, LCD_H_RES, "MIT License", C_LABEL, COLOR_BLACK, 1, true);
+    display_draw_text(0, 284, LCD_H_RES, build, C_LABEL, COLOR_BLACK, 1, true);
+    display_draw_text(0, 300, LCD_H_RES, "any button: back", COLOR_ACCENT, COLOR_BLACK, 1, true);
+}
+
+void display_show_about(bool show)
+{
+    taskENTER_CRITICAL(&state_lock);
+        about_active = show;
+        about_draw = show;
+        if (!show) view_dirty = true;       // the screen that was up before comes back
+    taskEXIT_CRITICAL(&state_lock);
+    display_wake();
+}
+
+bool display_about_active(void)
+{
+    return about_active;
 }
 
 static void display_task(void *pvParameters)
@@ -790,6 +848,15 @@ static void display_task(void *pvParameters)
             taskENTER_CRITICAL(&state_lock);
                 view_dirty = true;      // the first real screen replaces the animation
             taskEXIT_CRITICAL(&state_lock);
+        }
+
+        if (about_active) {
+            if (about_draw) {
+                about_draw = false;
+                display_draw_about();
+            }
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(250));
+            continue;
         }
 
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(250));
@@ -838,7 +905,7 @@ void display_update_traffic(uint32_t rx_count, uint32_t tx_count)
 
 void display_set_mode_view(const char *mode_title, const char *status_str, uint16_t state_color)
 {
-    if (prompt_hold) return;       // the running mode refreshes its status every few hundred ms; do not overwrite the menu
+    if (prompt_hold || about_active) return;       // the running mode refreshes its status every few hundred ms; do not overwrite the menu
     taskENTER_CRITICAL(&state_lock);
         // Repaint only when something shown actually changed, so a caller may set the same status repeatedly
         bool changed = strncmp(view.title, mode_title, sizeof(view.title) - 1) != 0 ||
@@ -914,7 +981,7 @@ void display_set_detail(uint8_t index, const char *label, const char *value)
         details[index].color = 0;
         if (index >= detail_count) {
             detail_count = index + 1;
-            if (!prompt_hold) view_dirty = true;      // the layout changed
+            if (!prompt_hold && !about_active) view_dirty = true;      // the layout changed
         }
     taskEXIT_CRITICAL(&state_lock);
     display_wake();
@@ -929,7 +996,7 @@ void display_set_details(const char *title, uint16_t title_color, const display_
     }
     taskENTER_CRITICAL(&state_lock);
         // Only a change in the number of rows needs the whole screen redrawn; otherwise just the rows that differ
-        if (!prompt_hold && (count != detail_count || strcmp(title, details_title) != 0)) view_dirty = true;
+        if (!prompt_hold && !about_active && (count != detail_count || strcmp(title, details_title) != 0)) view_dirty = true;
         strlcpy(details_title, title, sizeof(details_title));
         details_color = title_color;
         for (int i = 0; i < count; i++) {
@@ -948,7 +1015,7 @@ void display_clear_details(void)
         detail_count = 0;
         strlcpy(details_title, "UPDATE", sizeof(details_title));
         details_color = 0;
-        if (!prompt_hold) view_dirty = true;
+        if (!prompt_hold && !about_active) view_dirty = true;
     taskEXIT_CRITICAL(&state_lock);
     display_wake();
 }

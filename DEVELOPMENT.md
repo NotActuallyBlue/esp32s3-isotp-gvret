@@ -213,3 +213,16 @@ that of Simos Tools and Simos.app by Tycho ([TheFlashBold](https://github.com/Th
 When no CAN frame has arrived for 3 s (`BUS_QUIET_MS`), the car is off or nothing answers. Persist logging then slows to one request a second, so a
 dead bus is not hammered and a waking bus is still noticed, and ISO-TP errors stop being counted (they only mean the car is gone). Full speed
 returns within a second of the first answer. The bench simulator is never "quiet". The `Bus:` log line shows the running ISO-TP error total.
+
+## About screen and QR code
+
+`tools/gen_qr.py` (needs `pip install segno`) makes `main/about_qr.c`, a table of the QR code's modules for the project URL, so the dongle needs no
+QR encoder. Change `DEFAULT_URL` or pass `--url`, run it, rebuild. It is version 4 with medium error correction, so up to 62 bytes of URL fit.
+The table is drawn at 4 pixels per module with the quiet zone a scanner needs. KEY held for 3 s opens the screen in every mode except Diag (which has
+an ABOUT menu item) and the update mode.
+
+## Flash log numbering
+
+Boot numbers run 1 to 100 and start over (`FLASHLOG_BOOT_WRAP`). The newest log is the one whose number is ahead of the others by fewer than the
+six slots, so `tools/read_log.py` lists them in the right order across the wrap, and counts from older firmware that went above 100 still compare
+correctly. The log itself is six fixed 256 KB slots used in turn; nothing grows.

@@ -68,6 +68,21 @@ def dump_flash(port, out_path, offset, size, baud=921600):
     subprocess.run(cmd, check=True)
 
 
+WRAP = 100              # must match FLASHLOG_BOOT_WRAP in main/flashlog.c
+
+
+def order_sessions(sessions):
+    """Oldest first. Boot numbers wrap at 100, so the newest is the one ahead of all the others by fewer than SLOT_COUNT."""
+    newest = None
+    for s in sessions:
+        if all((s[0] % WRAP + WRAP - o[0] % WRAP) % WRAP < SLOT_COUNT for o in sessions):
+            newest = s[0]
+            break
+    if newest is None:
+        return sorted(sessions)
+    return sorted(sessions, key=lambda s: (newest % WRAP + WRAP - s[0] % WRAP) % WRAP, reverse=True)
+
+
 def decode(raw, size):
     slot_size = (size // SLOT_COUNT) & ~0xFFF
     sessions = []
@@ -83,8 +98,7 @@ def decode(raw, size):
         text = body[:end if end >= 0 else len(body)].decode("utf-8", errors="replace")
         reason_name = RESET_REASONS[reason] if reason < len(RESET_REASONS) else str(reason)
         sessions.append((boot, i, reason_name, text))
-    sessions.sort()
-    return sessions
+    return order_sessions(sessions)
 
 
 def find_tool(pattern):

@@ -37,10 +37,10 @@ typedef struct {
     char        clear_result[12];
 } module_t;
 
-typedef enum { UI_MENU, UI_RESULTS, UI_CONFIRM, UI_LIVE, UI_INFO, UI_NOTICE } ui_state_t;
+typedef enum { UI_MENU, UI_RESULTS, UI_CONFIRM, UI_LIVE, UI_INFO, UI_NOTICE, UI_ABOUT } ui_state_t;
 
-static const char *const menu_items[] = { "SCAN CODES", "CLEAR CODES", "LIVE DATA", "VEHICLE INFO" };
-#define MENU_COUNT      4
+static const char *const menu_items[] = { "SCAN CODES", "CLEAR CODES", "LIVE DATA", "VEHICLE INFO", "ABOUT" };
+#define MENU_COUNT      5
 
 static module_t         modules[MAX_MODULES];
 static int              module_count;
@@ -855,6 +855,14 @@ static void selftest(void)
     ESP_LOGW(DIAG_TAG, "SELFTEST info");
     vehicle_info();
 
+    ESP_LOGW(DIAG_TAG, "SELFTEST about (2 s)");
+    display_show_about(true);
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    ESP_LOGW(DIAG_TAG, "SELFTEST about active: %d", display_about_active());
+    display_show_about(false);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    ESP_LOGW(DIAG_TAG, "SELFTEST about closed: %d", !display_about_active());
+
     ESP_LOGW(DIAG_TAG, "SELFTEST live (3 s)");
     const esp_timer_create_args_t args = { .callback = release_key_later, .name = "selftest" };
     esp_timer_handle_t timer;
@@ -920,9 +928,12 @@ static void diag_task(void *arg)
                     live_data();
                     ui = UI_MENU;
                     show_menu();
-                } else {
+                } else if (menu_cursor == 3) {
                     ui = UI_INFO;
                     vehicle_info();
+                } else {
+                    ui = UI_ABOUT;
+                    display_show_about(true);
                 }
             }
             break;
@@ -963,6 +974,14 @@ static void diag_task(void *arg)
             take_key();                                 // a short press does not confirm
             break;
         }
+
+        case UI_ABOUT:
+            if (take_key() || take_next() || !display_about_active()) {
+                display_show_about(false);
+                ui = UI_MENU;
+                show_menu();
+            }
+            break;
 
         case UI_NOTICE:
         case UI_INFO:

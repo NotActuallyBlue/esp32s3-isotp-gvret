@@ -125,17 +125,66 @@ static void restart_with(hold_zone_t zone)
     esp_restart();
 }
 
+// KEY (the second button): hold it for 3 s to open the About screen with the QR code. Diag mode uses KEY for its own menu (it has an
+// ABOUT item) and the update mode must keep its progress on screen.
+#define KEY_BUTTON_PIN   14
+#define ABOUT_HOLD_MS    3000
+#define ABOUT_SHOW_MS    90000
+
 static void mode_button_monitor_task(void *pvParameters)
 {
     int held_ms = 0;
     bool woke_screen = false;
     hold_zone_t shown = ZONE_NONE;
+    int key_held_ms = 0, about_open_ms = 0;
+    bool key_was_down = false, about_can_close = false, key_block = false;
+    bool about_allowed = current_mode != OP_MODE_DIAG && current_mode != OP_MODE_WIFI_UPDATE;
+
+    if (about_allowed) {
+        gpio_config_t key_cfg = {
+            .pin_bit_mask = 1ULL << KEY_BUTTON_PIN,
+            .mode = GPIO_MODE_INPUT,
+            .pull_up_en = GPIO_PULLUP_ENABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE,
+        };
+        gpio_config(&key_cfg);
+    }
 
     while (1) {
+        if (about_allowed) {
+            bool key_down = gpio_get_level(KEY_BUTTON_PIN) == 0;
+            if (display_about_active()) {
+                about_open_ms += BUTTON_POLL_MS;
+                if (!key_down) about_can_close = true;                  // the press that opened it has been let go
+                if ((key_down && !key_was_down && about_can_close) || about_open_ms >= ABOUT_SHOW_MS) {
+                    display_show_about(false);
+                    about_can_close = false;
+                    key_block = true;                                   // a long closing press must not open it again
+                }
+            } else if (!key_down) {
+                key_held_ms = 0;
+                key_block = false;
+            } else if (!key_block) {
+                key_held_ms += BUTTON_POLL_MS;
+                if (key_held_ms >= ABOUT_HOLD_MS) {
+                    display_show_about(true);
+                    about_open_ms = 0;
+                    about_can_close = false;
+                    key_held_ms = 0;
+                }
+            }
+            key_was_down = key_down;
+        }
+
         // BOOT button is active LOW (0 when pressed)
         if (gpio_get_level(BOOT_BUTTON_PIN) == 0) {
             if (held_ms == 0) {
                 woke_screen = !display_is_awake();      // the first press only wakes a sleeping screen
+                if (display_about_active()) {           // any BOOT press closes the About screen and does nothing else
+                    display_show_about(false);
+                    woke_screen = true;
+                }
                 display_power(true);
                 display_skip_splash();
             }

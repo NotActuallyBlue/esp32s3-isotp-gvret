@@ -57,6 +57,9 @@ release when you see the mode you want.
 | about 8 to 9.5 seconds | **Wi-Fi update** | firmware update mode |
 | 9.5 seconds or more | **Cancel** | restarts in the same mode |
 
+**About screen.** Hold **KEY** for 3 seconds (in Diag mode, choose **ABOUT** in the menu) to show a QR code that opens this project's page on
+GitHub, along with the product name and firmware build. Any button closes it.
+
 The mode you pick is remembered. Bench sim and Wi-Fi update last for one session only: unplug the dongle and plug it back in to return
 to your mode.
 
@@ -220,6 +223,12 @@ You can update over Wi-Fi without any cable.
 
 ## Credits
 
-Built on [esp32-isotp-ble-bridge](https://github.com/Switchleg1/esp32-isotp-ble-bridge) by Switchleg1.
+Built on [esp32-isotp-ble-bridge](https://github.com/bri3d/esp32-isotp-ble-bridge) by Brian Ledbetter (bri3d) and its
+[fork](https://github.com/Switchleg1/esp32-isotp-ble-bridge) by Switchleg1. The ISO-TP engine comes from
+[isotp-c](https://github.com/lishen2/isotp-c) by Shen Li.
 
 Developers: see [DEVELOPMENT.md](DEVELOPMENT.md) for building, testing, logs and the source layout.
+
+## License
+
+Released under the [MIT License](LICENSE). The license text keeps the copyright notices of the original authors, as it requires.

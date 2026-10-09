@@ -21,6 +21,7 @@
 // while the bridge is running.
 #define FLASHLOG_SUBTYPE        0x40
 #define FLASHLOG_SLOT_COUNT     6
+#define FLASHLOG_BOOT_WRAP      100         // boot numbers run 1..100 and start over, so the number shown never grows
 #define FLASHLOG_MAGIC          0x474F4C42  // "BLOG"
 #define FLASHLOG_HEADER_SIZE    32
 #define FLASHLOG_RINGBUF_SIZE   (16 * 1024)
@@ -202,24 +203,38 @@ void flashlog_init(void)
 
     log_slot_size = (log_partition->size / FLASHLOG_SLOT_COUNT) & ~(log_partition->erase_size - 1);
 
-    // Pick the slot after the one with the highest boot count
-    uint32_t max_boot = 0;
-    int max_slot = -1;
+    // The newest slot is the one whose boot number is ahead of every other by fewer than the slot count (numbers wrap at 100, and
+    // counts from older firmware that were above 100 compare by their last two digits). The next boot uses the slot after it.
+    uint32_t boots[FLASHLOG_SLOT_COUNT];
+    bool valid[FLASHLOG_SLOT_COUNT];
     for (int i = 0; i < FLASHLOG_SLOT_COUNT; i++) {
         flashlog_header_t header;
-        if (esp_partition_read(log_partition, i * log_slot_size, &header, sizeof(header)) == ESP_OK &&
-            header.magic == FLASHLOG_MAGIC && header.boot_count != 0xFFFFFFFF &&
-            (max_slot < 0 || header.boot_count > max_boot)) {
-            max_boot = header.boot_count;
-            max_slot = i;
+        valid[i] = esp_partition_read(log_partition, i * log_slot_size, &header, sizeof(header)) == ESP_OK &&
+                   header.magic == FLASHLOG_MAGIC && header.boot_count != 0xFFFFFFFF;
+        boots[i] = valid[i] ? header.boot_count : 0;
+    }
+    int max_slot = -1;
+    uint32_t max_boot = 0;
+    for (int c = 0; c < FLASHLOG_SLOT_COUNT && max_slot < 0; c++) {
+        if (!valid[c]) continue;
+        bool newest = true;
+        for (int o = 0; o < FLASHLOG_SLOT_COUNT; o++) {
+            if (o != c && valid[o] && (boots[c] % FLASHLOG_BOOT_WRAP + FLASHLOG_BOOT_WRAP - boots[o] % FLASHLOG_BOOT_WRAP) % FLASHLOG_BOOT_WRAP >= FLASHLOG_SLOT_COUNT) {
+                newest = false;
+                break;
+            }
         }
+        if (newest) { max_slot = c; max_boot = boots[c]; }
+    }
+    for (int i = 0; i < FLASHLOG_SLOT_COUNT && max_slot < 0; i++) {         // numbers that do not follow on from each other: fall back to the highest
+        if (valid[i] && (max_slot < 0 || boots[i] > max_boot)) { max_slot = i; max_boot = boots[i]; }
     }
 
     int slot = (max_slot + 1) % FLASHLOG_SLOT_COUNT;
     log_slot_start = slot * log_slot_size;
     log_header = (flashlog_header_t){
         .magic = FLASHLOG_MAGIC,
-        .boot_count = max_slot < 0 ? 1 : max_boot + 1,
+        .boot_count = max_slot < 0 ? 1 : (max_boot % FLASHLOG_BOOT_WRAP) + 1,
         .reset_reason = esp_reset_reason(),
         .slot_size = log_slot_size,
     };
