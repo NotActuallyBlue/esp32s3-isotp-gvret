@@ -37,6 +37,7 @@ static void enter_deep_sleep(void)
 {
     ESP_LOGW(POWER_TAG, "Idle for %lld s: entering deep sleep. A CAN frame or the BOOT button wakes the dongle.",
              (long long)(idle_ms / 1000));
+    ESP_LOGI(POWER_TAG, "Pin levels going to sleep: CAN RX %d, BOOT %d", gpio_get_level(CAN_RX_PORT), gpio_get_level(BOOT_BUTTON_PIN));
     display_power(false);
     vTaskDelay(pdMS_TO_TICKS(1500));            // let the flash log write this line
 

@@ -85,7 +85,7 @@ void app_main(void)
         uint32_t wake = esp_sleep_get_wakeup_causes();
         uint64_t pins = (wake & BIT(ESP_SLEEP_WAKEUP_EXT1)) ? esp_sleep_get_ext1_wakeup_status() : 0;
         const char *source = (pins & (1ULL << CAN_RX_PORT)) ? "the CAN bus" : (pins & (1ULL << BOOT_BUTTON_PIN)) ? "the BOOT button" : "another source";
-        ESP_LOGI(MAIN_TAG, "Woken from deep sleep by %s", source);
+        ESP_LOGI(MAIN_TAG, "Woken from deep sleep by %s (causes 0x%lX, wake pins 0x%llX)", source, (unsigned long)wake, (unsigned long long)pins);
     }
 
     if (current_mode == OP_MODE_SIMOS_BLE) {
